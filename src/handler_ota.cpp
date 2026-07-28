@@ -1,6 +1,7 @@
 #include "globals.h"
 #include "webserver.h"
 
+#include <algorithm>
 #include <esp_flash_partitions.h>
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
@@ -46,7 +47,7 @@ esp_err_t handler_ota_post (httpd_req_t * req) {
 
     ESP_LOGI (TAG8, "receiving upload of new firmware");
     while (remaining > 0) {
-        int recv_len = httpd_req_recv (req, ota_buff, MIN (remaining, sizeof (ota_buff)));
+        int recv_len = httpd_req_recv (req, ota_buff, std::min (remaining, (int)sizeof (ota_buff)));
         if (recv_len <= 0) {
             ESP_LOGE (TAG8, "OTA: Data reception error (%d)", recv_len);
             esp_ota_abort (ota_handle);

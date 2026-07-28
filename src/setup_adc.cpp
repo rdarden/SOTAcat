@@ -6,9 +6,17 @@
 static const char * TAG8 = "sc:setupadc";
 
 adc_oneshot_unit_handle_t   Global_adc1_handle;
+
+// ADC clock source varies by chip - use the appropriate constant
+#ifdef ESP32_S3
+    #define ADC_CLK_SRC_CONST ADC_RTC_CLK_SRC_DEFAULT
+#else
+    #define ADC_CLK_SRC_CONST ADC_DIGI_CLK_SRC_DEFAULT
+#endif
+
 adc_oneshot_unit_init_cfg_t Global_init_config1 = {
     .unit_id  = ADC_UNIT_1,
-    .clk_src  = ADC_DIGI_CLK_SRC_DEFAULT,
+    .clk_src  = ADC_CLK_SRC_CONST,
     .ulp_mode = ADC_ULP_MODE_DISABLE,
 };
 adc_oneshot_chan_cfg_t Global_chan_cfg = {

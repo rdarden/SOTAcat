@@ -92,6 +92,21 @@ void set_hardware_specific (void) {
         I2C_SCL_PIN = ((gpio_num_t)-1);  // No I2C on bare board
         I2C_SDA_PIN = ((gpio_num_t)-1);  // No I2C on bare board
         ESP_LOGI (TAG8, "Bare XIAO ESP32C3 detected");
+    #elif defined(ESP32_S3)
+        // ESP32-S3 USB OTG Dev Board
+        UART_NUM = UART_NUM_0;  // Use default UART0 for serial communication
+        UART2_TX_PIN = ((gpio_num_t)43);  // GPIO43 (TX)
+        UART2_RX_PIN = ((gpio_num_t)44);  // GPIO44 (RX)
+        HW_TYPE = SOTAcat_HW_Type::K5EM_1;
+        HW_TYPE_STR = "ESP32_S3_USB_OTG";
+        LED_BLUE = ((gpio_num_t)1);  // Blue LED on GPIO1 (if available)
+        LED_RED = ((gpio_num_t)-1);  // No red LED
+        LED_RED_SUPL = ((gpio_num_t)-1);  // No supplementary LED
+        USB_DET_PIN = ((gpio_num_t)-1);  // USB detection via native USB OTG
+        I2C_SCL_PIN = ((gpio_num_t)8);   // I2C SCL
+        I2C_SDA_PIN = ((gpio_num_t)9);   // I2C SDA
+        ADC_BATTERY = 1;
+        ESP_LOGI (TAG8, "ESP32-S3 USB OTG Dev Board detected");
     #else
         // Production hardware detection
         HW_TYPE = detect_hardware_type();

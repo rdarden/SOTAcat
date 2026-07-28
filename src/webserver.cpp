@@ -4,6 +4,7 @@
 #include "kx_radio.h"
 #include "settings.h"
 
+#include <algorithm>
 #include <ctype.h>
 #include <memory>
 
@@ -175,7 +176,7 @@ static esp_err_t send_file_chunked (httpd_req_t * req, const uint8_t * start, co
     size_t    sent           = 0;
 
     while (sent < total_size) {
-        size_t to_send = MIN (CHUNK_SIZE, total_size - sent);
+        size_t to_send = std::min (CHUNK_SIZE, total_size - sent);
         int    ret     = ESP_FAIL;
 
         // Retry loop for EAGAIN/EWOULDBLOCK errors
