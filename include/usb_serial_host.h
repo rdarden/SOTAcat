@@ -51,12 +51,24 @@ int usb_serial_host_write(const uint8_t *data, size_t len);
 
 /**
  * Receive data from the connected USB device (non-blocking)
- * 
+ *
  * @param data Pointer to buffer for received data
  * @param len Maximum number of bytes to read
  * @return Number of bytes read, 0 if no data available, -1 on error
  */
 int usb_serial_host_read(uint8_t *data, size_t len);
+
+/**
+ * Receive data from the connected USB device, blocking until either `len` bytes
+ * have been collected or `wait_ms` has elapsed (mirrors ESP-IDF's uart_read_bytes()
+ * semantics, so it's a drop-in replacement for CAT command/response transport).
+ *
+ * @param data Pointer to buffer for received data
+ * @param len Maximum number of bytes to read
+ * @param wait_ms Total time budget to wait for data, in milliseconds
+ * @return Number of bytes actually read (may be less than len), -1 on error
+ */
+int usb_serial_host_read_blocking(uint8_t *data, size_t len, int wait_ms);
 
 /**
  * Flush any pending data to be sent

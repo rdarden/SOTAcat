@@ -193,6 +193,15 @@ static void usb_cdc_open_task (void * arg) {
         if (g_cdc_dev == NULL) {
             esp_err_t ret = cdc_acm_host_open (CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, 0, &dev_config, &g_cdc_dev);
             if (ret == ESP_OK) {
+                // Many CDC-ACM device firmwares (STM32's USB VCP stack very much included)
+                // gate actual UART activity on DTR being asserted, mirroring real RS-232
+                // "DTR = a terminal is connected" semantics -- real terminal programs always
+                // set this on open, but cdc_acm_host_open() itself does not. Without it, the
+                // device can enumerate and open cleanly yet never respond to anything sent.
+                esp_err_t line_ret = cdc_acm_host_set_control_line_state (g_cdc_dev, true, true);
+                if (line_ret != ESP_OK)
+                    ESP_LOGW (TAG8, "set_control_line_state() failed: %s (device may not respond)", esp_err_to_name (line_ret));
+
                 // g_cdc_vid/g_cdc_pid were captured by usb_new_device_callback() for this device.
                 ESP_LOGI (TAG8, "USB CDC-ACM device opened (VID=0x%04X PID=0x%04X); ready for CAT commands", g_cdc_vid, g_cdc_pid);
                 g_usb_connected = true;
@@ -327,6 +336,40 @@ int usb_serial_host_read (uint8_t * data, size_t len) {
     }
 
     return 0;  // No data available
+}
+
+int usb_serial_host_read_blocking (uint8_t * data, size_t len, int wait_ms) {
+    if (!g_usb_initialized) {
+        ESP_LOGW (TAG8, "USB read attempted before initialization");
+        return -1;
+    }
+
+    if (!data || len == 0)
+        return 0;
+
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS (wait_ms);
+    size_t     total    = 0;
+
+    while (total < len) {
+        TickType_t now = xTaskGetTickCount();
+        if (now >= deadline)
+            break;
+
+        usb_rx_packet_t packet;
+        if (xQueueReceive (g_usb_rx_queue, &packet, deadline - now) != pdTRUE)
+            break;
+
+        // Each queued packet is one CDC-ACM RX callback's worth of data; CAT command/response
+        // sizes here are small (well under USB_RX_BUFFER_SIZE), so a packet larger than the
+        // remaining space would be unexpected and is simply capped rather than carried over.
+        size_t copy_len = packet.len;
+        if (copy_len > len - total)
+            copy_len = len - total;
+        memcpy (data + total, packet.data, copy_len);
+        total += copy_len;
+    }
+
+    return (int)total;
 }
 
 esp_err_t usb_serial_host_flush (void) {

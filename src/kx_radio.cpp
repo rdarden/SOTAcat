@@ -11,6 +11,11 @@
 #include <driver/uart.h>
 #include <esp_timer.h>
 
+#ifdef ESP32_S3
+    #include "usb_serial_host.h"
+    #include "usb_host_display.h"
+#endif
+
 /*
  * See https://ftp.elecraft.com/KX2/Manuals%20Downloads/K3S&K3&KX3&KX2%20Pgmrs%20Ref,%20G4.pdf
  * for full KX command documentation
@@ -39,15 +44,58 @@ static QMXRadioDriver g_qmx_driver;
 #define KX_TIMEOUT_MS_SHORT_COMMANDS 100
 #define KX_TIMEOUT_MS_LONG_COMMANDS  2000
 
+#ifdef ESP32_S3
+    // How long to wait, at connect() time, for a QMX's USB CDC-ACM pipe to already be
+    // open before falling back to scanning the wired ACC UART. USB CDC has no baud rate
+    // to negotiate, so once open it's used as-is.
+    #define USB_CONNECT_WAIT_MS 3000
+#endif
+
 /*
  * Utilities
  */
 
+// True once connect() has selected the USB CDC pipe (see usb_serial_host.h) as the
+// active CAT transport instead of the wired ACC UART. All the retry/parsing logic
+// below is transport-agnostic; only these three functions know which one is in use.
+static bool g_use_usb_transport = false;
+
+static void cat_flush () {
+#ifdef ESP32_S3
+    if (g_use_usb_transport) {
+        // No separate flush concept for the USB CDC queue; just drain anything pending.
+        uint8_t discard[64];
+        while (usb_serial_host_read (discard, sizeof (discard)) > 0) {}
+        return;
+    }
+#endif
+    uart_flush (UART_NUM);
+}
+
+static void cat_write (const char * data, int len) {
+#ifdef ESP32_S3
+    if (g_use_usb_transport) {
+        usb_serial_host_write ((const uint8_t *)data, (size_t)len);
+        return;
+    }
+#endif
+    uart_write_bytes (UART_NUM, data, len);
+}
+
+static int cat_read (uint8_t * buf, int max_len, int wait_ms) {
+#ifdef ESP32_S3
+    if (g_use_usb_transport)
+        return usb_serial_host_read_blocking (buf, (size_t)max_len, wait_ms);
+#endif
+    return uart_read_bytes (UART_NUM, buf, max_len, pdMS_TO_TICKS (wait_ms));
+}
+
 /**
- * Sends a command via UART, reads the response, checks for validity, and retries if necessary.
- * Handles errors like the device being busy and logs detailed communication status.
+ * Sends a command via the active CAT transport (USB CDC or wired UART), reads the
+ * response, checks for validity, and retries if necessary. Handles errors like the
+ * device being busy and logs detailed communication status.
  *
- * @param cmd Command to be sent to UART, expressed as a null-terminated string.
+ * @param cmd Command to be sent, expressed as a null-terminated string.
  * @param response Buffer to store the response.
  * @param expected_chars Expected number of characters in the response.
  * @param tries Number of retries for the command.
@@ -57,12 +105,12 @@ static QMXRadioDriver g_qmx_driver;
 static bool uart_get_command (const char * command, char * response, int expected_chars, int tries, int wait_ms) {
     ESP_LOGV (TAG8, "trace: %s(command='%s', expect=%d)", __func__, command, expected_chars);
 
-    uart_flush (UART_NUM);
+    cat_flush ();
     int command_length = strlen (command);
-    uart_write_bytes (UART_NUM, command, command_length);  // Send command
+    cat_write (command, command_length);  // Send command
 
     int64_t start_time     = esp_timer_get_time();
-    int     returned_chars = uart_read_bytes (UART_NUM, response, expected_chars, pdMS_TO_TICKS (wait_ms));
+    int     returned_chars = cat_read ((uint8_t *)response, expected_chars, wait_ms);
     int64_t end_time       = esp_timer_get_time();
     float   elapsed_ms     = (end_time - start_time) / 1000.0;
 
@@ -122,10 +170,10 @@ static bool probe_for_qmx () {
     char qmx_response[64] = {0};
 
     ESP_LOGD (TAG8, "Entering probe_for_qmx()");
-    uart_flush (UART_NUM);
-    uart_write_bytes (UART_NUM, "VN;", 3);
+    cat_flush ();
+    cat_write ("VN;", 3);
 
-    int returned_chars = uart_read_bytes (UART_NUM, qmx_response, sizeof (qmx_response) - 1, pdMS_TO_TICKS (250));
+    int returned_chars = cat_read ((uint8_t *)qmx_response, sizeof (qmx_response) - 1, 250);
     if (returned_chars <= 0) {
         ESP_LOGV (TAG8, "QMX probe: no response");
         return false;
@@ -190,6 +238,37 @@ int KXRadio::connect() {
 
     if (!is_locked())
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
+
+#ifdef ESP32_S3
+    // Give a USB-connected QMX a window to finish CDC-ACM enumeration (see
+    // usb_serial_host.h/init_usb_if_available()) before falling back to scanning the
+    // wired ACC UART below. Unlike the wired port, USB CDC has no baud rate to negotiate,
+    // so once usb_serial_host_is_connected() is true its data pipe is already usable.
+    for (int waited_ms = 0; waited_ms < USB_CONNECT_WAIT_MS; waited_ms += 250) {
+        if (usb_serial_host_is_connected()) {
+            g_use_usb_transport = true;
+            ESP_LOGI (TAG8, "USB CDC device open; using USB transport for CAT communication");
+            // Give the device a moment after DTR/RTS assertion (see usb_cdc_open_task()) to
+            // actually start servicing its virtual UART before we probe it.
+            vTaskDelay (pdMS_TO_TICKS (1500));
+            empty_kx_input_buffer (100);
+            if (probe_for_qmx()) {
+                ESP_LOGI (TAG8, "QMX radio detected over USB CDC");
+                usb_host_display_set_line (5, "CAT: OK (QMX)", DISPLAY_COLOR_GREEN);
+                m_radio_type   = RadioType::QMX;
+                m_is_connected = true;
+                select_driver();
+                empty_kx_input_buffer (100);
+                return 0;  // no baud rate to report for USB
+            }
+            ESP_LOGW (TAG8, "USB CDC device open but didn't respond like a QMX; falling back to wired UART");
+            usb_host_display_set_line (5, "CAT: no resp", DISPLAY_COLOR_RED);
+            g_use_usb_transport = false;
+            break;
+        }
+        vTaskDelay (pdMS_TO_TICKS (250));
+    }
+#endif
 
     // Try 38400 baud first (QMX standard), then fall back to other rates
     int    baud_rates[] = {38400, 9600, 19200, 4800};
@@ -305,9 +384,9 @@ void KXRadio::empty_kx_input_buffer (int wait_ms) {
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
     char in_buff[64];
-    long returned_chars     = uart_read_bytes (UART_NUM, in_buff, sizeof (in_buff) - 1, pdMS_TO_TICKS (wait_ms));
+    int  returned_chars     = cat_read ((uint8_t *)in_buff, sizeof (in_buff) - 1, wait_ms);
     in_buff[returned_chars] = '\0';
-    ESP_LOGV (TAG8, "empty_kx_input_buffer() called, ate %ld bytes in %d ms with chars: %s", returned_chars, wait_ms, in_buff);
+    ESP_LOGV (TAG8, "empty_kx_input_buffer() called, ate %d bytes in %d ms with chars: %s", returned_chars, wait_ms, in_buff);
 }
 
 /**
@@ -408,16 +487,16 @@ bool KXRadio::put_to_kx (const char * command, int num_digits, long value, int t
     if (tries <= 0) {
         // simply write the command to the radio
         ESP_LOGI (TAG8, "CAT TX (no verify): '%s'", request);
-        uart_flush (UART_NUM);
-        uart_write_bytes (UART_NUM, request, num_digits + 3);
+        cat_flush ();
+        cat_write (request, num_digits + 3);
         return true;
     }
 
     // validate the write was successful
     for (int attempt = 0; attempt < tries; attempt++) {
         ESP_LOGI (TAG8, "CAT TX: '%s'", request);
-        uart_flush (UART_NUM);
-        uart_write_bytes (UART_NUM, request, num_digits + 3);
+        cat_flush ();
+        cat_write (request, num_digits + 3);
 
         // Now read-back the value to verify it was set correctly
         long out_value = get_from_kx (command, 2, num_digits);
@@ -532,8 +611,8 @@ bool KXRadio::put_to_kx_command_string (const char * command, int tries) {
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
     ESP_LOGI (TAG8, "CAT TX (direct): '%s'", command);
-    uart_flush (UART_NUM);
-    uart_write_bytes (UART_NUM, command, strlen (command));
+    cat_flush ();
+    cat_write (command, strlen (command));
 
     return true;
 }
