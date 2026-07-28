@@ -22,5 +22,8 @@
         "esp_log.h": "c",
         "settings.h": "c",
         "kx_radio.h": "c"
+    },
+    "chat.tools.terminal.autoApprove": {
+        "pio": true
     }
 }

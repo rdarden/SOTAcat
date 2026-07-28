@@ -86,6 +86,7 @@ void setup () {
     ESP_LOGV (TAG8, "trace: %s()", __func__);
 
     set_hardware_specific();
+    init_usb_if_available();
 
     //  Turn on the board LED to indicate that we are starting up
     if (LED_BLUE != ((gpio_num_t)-1)) {

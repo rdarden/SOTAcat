@@ -3,6 +3,14 @@
 ## Purpose
 This document summarizes the work completed for adding QMX support and a DigiPi-based QMX CAT bridge to the SOTAcat project.
 
+## Current project state (2026-07-27)
+- QMX is always treated as a self-powered radio in this project.
+- The primary working path remains UART CAT (direct serial, or via the DigiPi/Pi bridge).
+- ESP32-S3 board routing is now explicitly configured for USB host experiments:
+  - `USB_SEL` (GPIO18) is forced HIGH to route D+/D- to the Type-A host path.
+  - `DEV_VBUS_EN` (GPIO12) is forced LOW so the board does not source VBUS to the host connector.
+- USB host stack code exists as a placeholder scaffold (`usb_serial_host.cpp`) and initializes state/logging, but full CDC enumeration and data transfer are not implemented yet.
+
 ## What was added
 
 ### 1. DigiPi web UI integration
@@ -42,9 +50,12 @@ This document summarizes the work completed for adding QMX support and a DigiPi-
 
 ## Current status
 - QMX detection is implemented in firmware and can be recognized during radio connect.
-- QMX-specific power writes are now sent without readback verification to avoid malformed response handling.
-- The RUN page now loads radio type and disables `Min Power`, `Max Power`, and `Tune ATU` controls when connected to QMX.
-- Full QMX CAT command support remains minimal; power and tune operations are gated until behavior is stabilized.
+- Driver selection is model-aware and activates `QMXRadioDriver` when QMX is detected.
+- QMX power writes (`PC`) are sent without readback verification to avoid QMX response-format mismatches.
+- QMX volume uses `AG` with absolute target values and a 2 dB per UI-step mapping in the current implementation.
+- The RUN page disables QMX-unsupported controls (`Min Power`, `Max Power`, `Tune ATU`, and FM mode button) when QMX is connected.
+- FT8-related QMX command handling exists in the QMX driver, but end-to-end behavior still requires on-radio validation.
+- ESP32-S3 USB host initialization and board pin policy are in place, but USB CDC transport is still placeholder/TODO.
 
 ## Notes for handoff
 
@@ -68,6 +79,7 @@ This document summarizes the work completed for adding QMX support and a DigiPi-
 - Verify the DigiPi UI toggle correctly starts/stops the service.
 
 ## Known limitations
-- The QMX driver implementation is minimal and only supports a subset of direct CAT commands.
-- The detection helper is currently based on `VN;` response content and only basic QMX identification.
-- Full QMX-specific command support and advanced features still need further implementation and testing.
+- The QMX driver supports a practical subset of commands but not full parity with all KX/KH1 features.
+- Some behaviors are intentionally disabled for QMX in the web UI (ATU tuning and power presets).
+- Detection currently relies primarily on the `VN;` probe/response pattern and basic response heuristics.
+- ESP32-S3 USB host code is not yet a complete USB CDC data path (enumeration/endpoint I/O still TODO).

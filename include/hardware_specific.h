@@ -26,4 +26,5 @@ extern int         LED_ON;
 extern int         ADC_BATTERY;
 
 extern void         set_hardware_specific (void);
+extern void         init_usb_if_available (void);
 extern const char * get_version_string (void);

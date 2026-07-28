@@ -1,6 +1,10 @@
 #include "hardware_specific.h"
 #include "build_info.h"
 
+#ifdef ESP32_S3
+    #include "usb_serial_host.h"
+#endif
+
 #include <cstdio>
 #include <driver/gpio.h>
 #include <driver/uart.h>
@@ -131,5 +135,59 @@ void set_hardware_specific (void) {
             ESP_LOGE (TAG8, "unknown hardware");
             break;
         }
+    #endif
+}
+
+/**
+ * Initialize USB host for ESP32-S3 boards
+ * Should be called after set_hardware_specific() during board initialization
+ */
+void init_usb_if_available(void) {
+    #ifdef ESP32_S3
+        // Safety rollback:
+        // Do not force USB_SEL/DEV_VBUS_EN during normal boot yet.
+        // On this board, forcing USB path selection too early can make the
+        // active console path disappear, which looks like a dead board.
+        ESP_LOGW(TAG8, "USB routing override disabled for stability (USB_SEL/DEV_VBUS_EN unchanged)");
+        ESP_LOGW(TAG8, "If needed for host tests, set USB_SEL(GPIO18)=HIGH and DEV_VBUS_EN(GPIO12)=LOW manually");
+
+        ESP_LOGI(TAG8, "");
+        ESP_LOGI(TAG8, "╔════════════════════════════════════════════════════╗");
+        ESP_LOGI(TAG8, "║  Attempting USB Host Initialization for QMX Radio  ║");
+        ESP_LOGI(TAG8, "╚════════════════════════════════════════════════════╝");
+        
+        esp_err_t ret = usb_serial_host_init();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG8, "✗ USB host initialization FAILED: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG8, "  Falling back to UART mode");
+            return;
+        }
+        
+        ESP_LOGI(TAG8, "✓ USB host initialized successfully");
+        
+        // Give USB host time to enumerate devices
+        ESP_LOGI(TAG8, "Waiting for device enumeration...");
+        for (int i = 0; i < 10; i++) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            
+            if (usb_serial_host_is_connected()) {
+                ESP_LOGI(TAG8, "");
+                ESP_LOGI(TAG8, "╔════════════════════════════════════════════════════╗");
+                ESP_LOGI(TAG8, "║         ✓ QMX RADIO DETECTED ON USB HOST!           ║");
+                ESP_LOGI(TAG8, "╚════════════════════════════════════════════════════╝");
+                ESP_LOGI(TAG8, "");
+                return;
+            }
+            
+            if (i == 4) {
+                ESP_LOGI(TAG8, "  [%d/10] Still waiting for device...", i + 1);
+            }
+        }
+        
+        ESP_LOGW(TAG8, "");
+        ESP_LOGW(TAG8, "⚠ No USB device detected after 1 second");
+        ESP_LOGW(TAG8, "  Status: %s", usb_serial_host_get_status());
+        ESP_LOGW(TAG8, "  Action: Connect QMX radio to ESP32-S3 USB host port");
+        ESP_LOGW(TAG8, "");
     #endif
 }

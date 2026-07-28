@@ -5,6 +5,10 @@
 #include "hardware_specific.h"
 #include "settings.h"
 
+#ifdef ESP32_S3
+    #include "usb_serial_host.h"
+#endif
+
 #include <cmath>
 #include <ctime>
 #include <driver/gpio.h>
@@ -55,6 +59,15 @@ void idle_status_task (void * _pvParameter) {
 
         int blinks = std::ceil ((now - LastUserActivityUnixTime) / (AUTO_SHUTDOWN_TIME_SECONDS / 4.0));
         ESP_LOGV (TAG8, "blinks %d", blinks);
+        
+        // Log USB status periodically (every ~30 seconds, when blinks matches certain value)
+        #ifdef ESP32_S3
+            static time_t last_usb_status_log = 0;
+            if (now - last_usb_status_log > 30) {
+                ESP_LOGI(TAG8, "USB Status: %s", usb_serial_host_get_status());
+                last_usb_status_log = now;
+            }
+        #endif
 
         // Count USB detection as a user event (only if USB_DET_PIN is available)
         if (USB_DET_PIN != ((gpio_num_t)-1) && gpio_get_level (USB_DET_PIN)) {

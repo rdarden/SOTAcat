@@ -5,6 +5,14 @@ This document summarizes how to determine which radio is connected to the serial
 
 The goal is to add QMX support to the SOTAcat firmware while retaining full compatibility with KX2, KX3, KH1, and any other radios already supported by SOTAcat.
 
+## Current implementation snapshot (2026-07-27)
+- QMX support is implemented and selectable via `RadioType::QMX`.
+- Detection currently probes `VN;` and classifies QMX from the returned content.
+- `QMXRadioDriver` is integrated into runtime driver selection and handles frequency, mode, power, volume, TX/RX, keyer message send, and time sync.
+- QMX-specific guardrails are active in the web UI: `Min Power`, `Max Power`, `Tune ATU`, and FM mode are disabled when QMX is detected.
+- QMX is treated as self-powered in this project.
+- ESP32-S3 USB host board routing pins are configured (`USB_SEL` high, `DEV_VBUS_EN` low), but the USB host transport layer is still a placeholder and not yet a complete CDC data path.
+
 ## Documentation references
 - QMX web page: https://qrp-labs.com/qmx.html
 - QMX operating manual: https://qrp-labs.com/images/qmx/manuals/operation_1_04_004.pdf
@@ -62,24 +70,22 @@ If the user already has a terminal connection to QMX, the firmware can also conf
 
 For the initial implementation, SOTAcat should assume a conservative default of 9600 bps for QMX AUX until the radio is detected and the active baud is confirmed.
 
-## Plan for adding QMX support
-On startup, SOTAcat should detect whether a radio is connected and determine the model. Once the radio is identified, the remaining CAT commands must be routed and interpreted in a way that is compatible with that model.
+## Current QMX support architecture
+On startup, SOTAcat detects radio type during `KXRadio::connect()` and then selects a model-specific driver.
 
-SOTAcat currently performs this detection in `kxRadio.connect()`. It probes the serial port, detects `KH1` via its `;I;` / `;RVR;` handshake, and detects `KX2` / `KX3` by issuing `OM;` and parsing the response. The radio type is stored in `m_radio_type`, and the appropriate driver is selected before normal operation begins.
-
-This requires:
-- a startup detection step on the serial connection
-- a model-specific radio type state for command dispatch
-- compatibility behavior that preserves KX2/KX3/KH1 support while adding QMX
+Current behavior in firmware:
+- a startup detection step probes for QMX using `VN;`
+- radio type is stored in `m_radio_type`
+- `KXRadio::select_driver()` dispatches to `QMXRadioDriver` when QMX is detected
+- compatibility behavior for KX2/KX3/KH1 is preserved via existing driver paths
 
 ## Radio detection strategy
-The detection strategy should use commands that are either:
-- supported by QMX but not by KX2/KX3/KH1, or
-- supported by all radios but return distinguishable responses.
+The current implementation uses a practical subset of this strategy.
 
-### Best QMX-only probes
-Prefer commands that are unique to QMX and not present in the KX/KH1 implementations:
-- `VN;` — QMX firmware version, response contains `QMX`
+### Implemented probe
+- `VN;` is sent during connect and responses are checked for QMX-identifying patterns.
+
+### Candidate probes for future hardening
 - `UI;` — unique chip ID, QMX-specific
 - `GP;` — GPS coordinates/date-time, QMX-specific
 - `Q0;` … `Q9;`, `QA;` … `QC;` — QMX extended session parameters
@@ -101,7 +107,16 @@ The code currently supports:
 - `KX2`
 - `KX3`
 - `KH1`
-- QMX is being added as a detected radio option.
+- `QMX`
+
+## ESP32-S3 USB host board policy for self-powered QMX
+For the ESP32-S3 USB-OTG board target, startup now applies the following policy:
+- `USB_SEL` is set high to route D+/D- to the host connector path.
+- `DEV_VBUS_EN` is set low so SOTAcat does not source VBUS to the radio.
+- USB host init logs that the self-powered policy does not require external VBUS detect in host-mode PHY defaults.
+
+Current limitation:
+- USB host serial transport is not fully implemented yet (enumeration and endpoint transfer path are TODO).
 
 ## CAT command table
 | Purpose | KX2 / KX3 | KH1 | QMX |
@@ -149,11 +164,10 @@ Based on current information, the following SOTAcat features may not be fully po
 
 ## Recommended detection workflow
 1. On startup, probe the serial link for an attached radio.
-2. Send a QMX-only probe such as `VN;` and look for the `QMX` marker.
-3. If `VN;` fails, send `UI;` and verify a QMX-style unique ID response.
-4. If needed, use `GP;` as a tertiary check.
-5. If QMX is not confirmed, use `ID;` and inspect the returned numeric model ID to distinguish KX2/KX3 from other radios.
-6. After radio identification, initialize the radio driver for the detected model and dispatch subsequent CAT commands through the appropriate model-specific handler.
+2. Send `VN;` and check for QMX-identifying response markers.
+3. If QMX is not confirmed, continue existing KX/KH1 detection path.
+4. Initialize the radio driver for the detected model and dispatch subsequent CAT commands through the model-specific handler.
+5. Future improvement: add `UI;` and/or `GP;` as secondary QMX confirmation probes.
 
 ## Pi Zero / DigiPi bridge workaround for a regular QMX
 This is a practical bridge option when the regular QMX does not expose a convenient AUX serial port and you want to keep SOTAcat unchanged.
