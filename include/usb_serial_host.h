@@ -2,13 +2,27 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include <esp_err.h>
 
 /**
  * USB Serial Host Driver for ESP32-S3
- * 
- * Provides CDC (Communications Device Class) support for communicating with 
- * serial devices like the QMX radio over USB on ESP32-S3 boards.
+ *
+ * Provides CDC-ACM (Communications Device Class) support for communicating with
+ * serial devices like the QMX radio over USB on ESP32-S3 boards, built on top of
+ * the ESP-IDF `usb_host` library and the `usb_host_cdc_acm` component.
+ *
+ * QMX's exact USB VID/PID is not known in advance, so any CDC-ACM-compliant device
+ * connected to the host port is accepted (see CDC_HOST_ANY_VID/CDC_HOST_ANY_PID usage
+ * in usb_serial_host.cpp). If QMX turns out to enumerate via a USB-UART bridge chip
+ * (FTDI/CP210x/CH34x) rather than native CDC-ACM, this driver will need one of the
+ * matching espressif/usb_host_*_vcp components added instead of/alongside cdc_acm.
+ *
+ * NOTE: the ESP32-S3 has a single physical USB PHY, shared between the native
+ * "USB Serial/JTAG" console peripheral and the "USB-OTG" host peripheral used here.
+ * Once usb_serial_host_init() successfully installs the USB Host library, the console
+ * (CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG) will likely stop producing output, because the
+ * two peripherals cannot own the PHY at the same time.
  */
 
 /**

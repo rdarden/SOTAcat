@@ -5,23 +5,17 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
-#include <freertos/semphr.h>
 #include <string.h>
 
-// USB host headers from ESP-IDF
 #ifdef ESP32_S3
-    // For now, we'll use simpler USB approach with tusb_host or basic USB
-    // The full implementation would use:
-    // #include <esp_usb_host.h>
-    // #include <usb/usb_host.h>
-    // For this version, we'll create a placeholder that can be extended
+    #include <driver/gpio.h>
+    #include <esp_intr_alloc.h>
+    #include "usb/usb_host.h"
+    #include "usb/cdc_acm_host.h"
+    #include "usb_host_display.h"
 #endif
 
 static const char *TAG8 = "sc:usb_host";
-
-// Global USB serial device state
-static volatile bool g_usb_connected = false;
-static volatile bool g_usb_initialized = false;
 
 // RX buffer for incoming data
 #define USB_RX_BUFFER_SIZE 1024
@@ -32,210 +26,383 @@ typedef struct {
     size_t len;
 } usb_rx_packet_t;
 
-// Create RX queue
+// Global USB serial device state
+static volatile bool g_usb_connected  = false;
+static volatile bool g_usb_initialized = false;
 static QueueHandle_t g_usb_rx_queue = NULL;
 
-/**
- * USB event callback - placeholder for future implementation
- */
-__attribute__((unused))
-static void usb_host_event_callback(void) {
-    ESP_LOGI(TAG8, "USB event received");
+#ifdef ESP32_S3
+
+#define USB_HOST_TASK_PRIORITY     10
+#define USB_HOST_TASK_STACK_SIZE   4096
+#define USB_OPEN_TASK_STACK_SIZE   4096
+#define USB_DEVICE_OPEN_TIMEOUT_MS 1000
+#define USB_DEVICE_POLL_DELAY_MS   500
+
+// Onboard status LEDs, dedicated to USB host status so they can be read without
+// WiFi or a console connection (both of which may be unavailable once USB host
+// mode is active). Yellow = host mode active; Green = a CDC device is open.
+#define USB_HOST_ACTIVE_LED_GPIO ((gpio_num_t)16)  // Yellow
+#define USB_DEVICE_OPEN_LED_GPIO ((gpio_num_t)15)  // Green
+
+static void usb_status_led_init (void) {
+    gpio_set_direction (USB_HOST_ACTIVE_LED_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_direction (USB_DEVICE_OPEN_LED_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level (USB_HOST_ACTIVE_LED_GPIO, 0);
+    gpio_set_level (USB_DEVICE_OPEN_LED_GPIO, 0);
 }
 
+#define USB_OVER_CURRENT_GPIO ((gpio_num_t)21)
+
+static cdc_acm_dev_hdl_t g_cdc_dev              = NULL;
+static uint16_t          g_cdc_vid              = 0;
+static uint16_t          g_cdc_pid              = 0;
+static bool              g_device_ever_seen     = false;  // any new_dev_cb, CDC-ACM or not
+static esp_err_t         g_last_open_err        = ESP_OK; // last non-OK cdc_acm_host_open() result
+static TaskHandle_t      g_usb_host_task_handle = NULL;
+static TaskHandle_t      g_usb_open_task_handle = NULL;
+
 /**
- * USB host task - placeholder for future implementation
- * In a full implementation, this would:
- * - Register with USB host
- * - Monitor for device connections
- * - Handle bulk transfers
- * - Manage RX queue
+ * Called by the CDC-ACM driver whenever data arrives from the device.
+ * Runs in the driver's own task context, so we just copy into our RX queue
+ * for usb_serial_host_read() to drain.
  */
-__attribute__((unused))
-static void usb_host_task(void *arg) {
-    ESP_LOGI(TAG8, "USB host task started (placeholder)");
-    
-    // TODO: Implement full USB host stack integration
-    // This requires ESP-IDF USB host headers which may need additional configuration
-    // For now, this is a placeholder that demonstrates the structure
-    
-    // Future implementation will:
-    // 1. Initialize USB host library
-    // 2. Register client with USB host
-    // 3. Scan for CDC devices
-    // 4. Open connection to QMX radio
-    // 5. Handle RX/TX in separate threads
-    
-    while (g_usb_initialized) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+static bool usb_cdc_rx_callback (const uint8_t * data, size_t data_len, void * user_arg) {
+    if (!g_usb_rx_queue || data_len == 0)
+        return true;
+
+    usb_rx_packet_t packet;
+    packet.len = (data_len < USB_RX_BUFFER_SIZE) ? data_len : USB_RX_BUFFER_SIZE;
+    memcpy (packet.data, data, packet.len);
+
+    if (xQueueSend (g_usb_rx_queue, &packet, 0) != pdTRUE)
+        ESP_LOGW (TAG8, "USB RX queue full, dropping %d bytes", (int)packet.len);
+
+    return true;
+}
+
+static void usb_cdc_event_callback (const cdc_acm_host_dev_event_data_t * event, void * user_ctx) {
+    switch (event->type) {
+    case CDC_ACM_HOST_DEVICE_DISCONNECTED:
+        ESP_LOGW (TAG8, "USB CDC device disconnected (VID=0x%04X PID=0x%04X)", g_cdc_vid, g_cdc_pid);
+        g_usb_connected = false;
+        gpio_set_level (USB_DEVICE_OPEN_LED_GPIO, 0);
+        usb_host_display_set_line (2, "NO DEVICE", DISPLAY_COLOR_GRAY);
+        usb_host_display_set_line (3, "", DISPLAY_COLOR_WHITE);
+        cdc_acm_host_close (g_cdc_dev);
+        g_cdc_dev = NULL;
+        break;
+    case CDC_ACM_HOST_ERROR:
+        ESP_LOGE (TAG8, "USB CDC error: %d", event->data.error);
+        break;
+    case CDC_ACM_HOST_SERIAL_STATE:
+        ESP_LOGD (TAG8, "USB CDC serial state changed: 0x%04X", event->data.serial_state.val);
+        break;
+    default:
+        break;
     }
-    
-    ESP_LOGI(TAG8, "USB host task stopped");
-    vTaskDelete(NULL);
 }
 
-esp_err_t usb_serial_host_init(void) {
+/**
+ * Called for every USB device that connects to the host port, CDC-ACM or not.
+ * Just used here to log the VID/PID; cdc_acm_host_open() (in usb_cdc_open_task)
+ * is what actually claims a matching device.
+ */
+static void usb_new_device_callback (usb_device_handle_t usb_dev) {
+    const usb_device_desc_t * device_desc;
+    if (usb_host_get_device_descriptor (usb_dev, &device_desc) == ESP_OK) {
+        ESP_LOGI (TAG8, "USB device connected: VID=0x%04X PID=0x%04X", device_desc->idVendor, device_desc->idProduct);
+        // Recorded here (rather than after cdc_acm_host_open()) because the open call doesn't
+        // hand back descriptor info; this callback fires for the same device just beforehand.
+        g_cdc_vid          = device_desc->idVendor;
+        g_cdc_pid          = device_desc->idProduct;
+        g_device_ever_seen = true;
+
+        char line[16];
+        snprintf (line, sizeof (line), "%04X:%04X", device_desc->idVendor, device_desc->idProduct);
+        usb_host_display_set_line (2, line, DISPLAY_COLOR_YELLOW);
+    }
+}
+
+/**
+ * Owns the USB Host library event loop for the lifetime of USB host usage.
+ * Must keep running (usb_host_lib_handle_events) or device enumeration stalls.
+ */
+static void usb_host_lib_task (void * arg) {
+    usb_host_config_t host_config = {};
+    host_config.skip_phy_setup = false;
+    host_config.intr_flags     = ESP_INTR_FLAG_LEVEL1;
+
+    ESP_LOGW (TAG8, "Installing USB Host library; native USB console output may stop from this point");
+    esp_err_t ret = usb_host_install (&host_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE (TAG8, "usb_host_install() failed: %s", esp_err_to_name (ret));
+        usb_host_display_set_line (1, "HOST FAIL", DISPLAY_COLOR_RED);
+        xTaskNotifyGive ((TaskHandle_t)arg);
+        vTaskDelete (NULL);
+        return;
+    }
+
+    cdc_acm_host_driver_config_t driver_config = {};
+    driver_config.driver_task_stack_size = USB_HOST_TASK_STACK_SIZE;
+    driver_config.driver_task_priority   = USB_HOST_TASK_PRIORITY + 1;
+    driver_config.xCoreID                = 0;
+    driver_config.new_dev_cb             = usb_new_device_callback;
+    ret = cdc_acm_host_install (&driver_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE (TAG8, "cdc_acm_host_install() failed: %s", esp_err_to_name (ret));
+        usb_host_display_set_line (1, "CDC FAIL", DISPLAY_COLOR_RED);
+        usb_host_uninstall();
+        xTaskNotifyGive ((TaskHandle_t)arg);
+        vTaskDelete (NULL);
+        return;
+    }
+
+    gpio_set_level (USB_HOST_ACTIVE_LED_GPIO, 1);  // Yellow: host mode is up
+    usb_host_display_set_line (1, "HOST: UP", DISPLAY_COLOR_GREEN);
+    xTaskNotifyGive ((TaskHandle_t)arg);
+
+    while (g_usb_initialized) {
+        uint32_t event_flags;
+        usb_host_lib_handle_events (pdMS_TO_TICKS (1000), &event_flags);
+    }
+
+    gpio_set_level (USB_HOST_ACTIVE_LED_GPIO, 0);
+    usb_host_display_set_line (1, "HOST: DOWN", DISPLAY_COLOR_GRAY);
+    cdc_acm_host_uninstall();
+    usb_host_uninstall();
+    ESP_LOGI (TAG8, "USB host library task stopped");
+    vTaskDelete (NULL);
+}
+
+/**
+ * Repeatedly (re)opens a CDC-ACM device on the host port whenever one isn't
+ * already connected. QMX's VID/PID isn't known in advance, so we accept any
+ * CDC-ACM-compliant device (CDC_HOST_ANY_VID/PID).
+ */
+static void usb_cdc_open_task (void * arg) {
+    cdc_acm_host_device_config_t dev_config = {};
+    dev_config.connection_timeout_ms = USB_DEVICE_OPEN_TIMEOUT_MS;
+    dev_config.out_buffer_size       = 256;
+    dev_config.in_buffer_size        = 256;
+    dev_config.event_cb              = usb_cdc_event_callback;
+    dev_config.data_cb               = usb_cdc_rx_callback;
+    dev_config.user_arg              = NULL;
+
+    while (g_usb_initialized) {
+        if (g_cdc_dev == NULL) {
+            esp_err_t ret = cdc_acm_host_open (CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, 0, &dev_config, &g_cdc_dev);
+            if (ret == ESP_OK) {
+                // g_cdc_vid/g_cdc_pid were captured by usb_new_device_callback() for this device.
+                ESP_LOGI (TAG8, "USB CDC-ACM device opened (VID=0x%04X PID=0x%04X); ready for CAT commands", g_cdc_vid, g_cdc_pid);
+                g_usb_connected = true;
+                gpio_set_level (USB_DEVICE_OPEN_LED_GPIO, 1);  // Green: device open
+
+                char line[16];
+                snprintf (line, sizeof (line), "%04X:%04X OK", g_cdc_vid, g_cdc_pid);
+                usb_host_display_set_line (2, line, DISPLAY_COLOR_GREEN);
+                usb_host_display_set_line (3, "", DISPLAY_COLOR_WHITE);
+            }
+            else {
+                // Either nothing connected within the timeout, or a device connected (see
+                // usb_new_device_callback's log/g_device_ever_seen) but didn't match the
+                // CDC-ACM or CDC-like-vendor-specific descriptor shape this driver looks for.
+                g_last_open_err = ret;
+                if (g_device_ever_seen) {
+                    // Strip the common "ESP_ERR_"/"ESP_" prefix so more of the
+                    // meaningful part of the name survives the display's truncation.
+                    const char * name = esp_err_to_name (ret);
+                    if (strncmp (name, "ESP_ERR_", 8) == 0)
+                        name += 8;
+                    else if (strncmp (name, "ESP_", 4) == 0)
+                        name += 4;
+                    usb_host_display_set_line (3, name, DISPLAY_COLOR_RED);
+                }
+            }
+        }
+        else {
+            vTaskDelay (pdMS_TO_TICKS (USB_DEVICE_POLL_DELAY_MS));
+        }
+
+        bool over_current = gpio_get_level (USB_OVER_CURRENT_GPIO) != 0;
+        usb_host_display_set_line (4, over_current ? "OVERCUR: YES" : "OVERCUR: no",
+            over_current ? DISPLAY_COLOR_RED : DISPLAY_COLOR_GRAY);
+    }
+
+    vTaskDelete (NULL);
+}
+
+#endif  // ESP32_S3
+
+esp_err_t usb_serial_host_init (void) {
     if (g_usb_initialized) {
-        ESP_LOGW(TAG8, "USB serial host already initialized");
+        ESP_LOGW (TAG8, "USB serial host already initialized");
         return ESP_OK;
     }
-    
-    // Only initialize for ESP32-S3
+
     #ifndef ESP32_S3
-        ESP_LOGE(TAG8, "USB serial host only supported on ESP32-S3");
+        ESP_LOGE (TAG8, "USB serial host only supported on ESP32-S3");
         return ESP_ERR_NOT_SUPPORTED;
+    #else
+        usb_status_led_init();
+        usb_host_display_init();
+
+        g_usb_rx_queue = xQueueCreate (USB_RX_QUEUE_SIZE, sizeof (usb_rx_packet_t));
+        if (!g_usb_rx_queue) {
+            ESP_LOGE (TAG8, "FAILED: Could not create USB RX queue");
+            return ESP_ERR_NO_MEM;
+        }
+
+        g_usb_initialized = true;
+
+        if (xTaskCreate (usb_host_lib_task, "usb_host_lib", USB_HOST_TASK_STACK_SIZE, xTaskGetCurrentTaskHandle(),
+                          USB_HOST_TASK_PRIORITY, &g_usb_host_task_handle) != pdPASS) {
+            ESP_LOGE (TAG8, "Failed to create USB host library task");
+            g_usb_initialized = false;
+            vQueueDelete (g_usb_rx_queue);
+            g_usb_rx_queue = NULL;
+            return ESP_ERR_NO_MEM;
+        }
+
+        // Wait for usb_host_install()/cdc_acm_host_install() to finish (or fail) before returning.
+        ulTaskNotifyTake (pdTRUE, pdMS_TO_TICKS (2000));
+
+        if (xTaskCreate (usb_cdc_open_task, "usb_cdc_open", USB_OPEN_TASK_STACK_SIZE, NULL,
+                          USB_HOST_TASK_PRIORITY, &g_usb_open_task_handle) != pdPASS) {
+            ESP_LOGE (TAG8, "Failed to create USB CDC open task");
+            return ESP_ERR_NO_MEM;
+        }
+
+        ESP_LOGI (TAG8, "USB host initialized; watching host port for a QMX CDC-ACM device");
+        return ESP_OK;
     #endif
-    
-    ESP_LOGI(TAG8, "======================================================");
-    ESP_LOGI(TAG8, "Initializing USB host for QMX radio detection");
-    ESP_LOGI(TAG8, "======================================================");
-    ESP_LOGI(TAG8, "USB host self-powered device policy: external VBUS detect not required (ESP-IDF host-mode PHY defaults)");
-    
-    // Create RX queue
-    g_usb_rx_queue = xQueueCreate(USB_RX_QUEUE_SIZE, sizeof(usb_rx_packet_t));
-    if (!g_usb_rx_queue) {
-        ESP_LOGE(TAG8, "FAILED: Could not create USB RX queue");
-        return ESP_ERR_NO_MEM;
-    }
-    ESP_LOGI(TAG8, "✓ USB RX queue created (capacity: %d packets)", USB_RX_QUEUE_SIZE);
-    
-    g_usb_initialized = true;
-    
-    ESP_LOGI(TAG8, "");
-    ESP_LOGI(TAG8, "USB Host Status:");
-    ESP_LOGI(TAG8, "  - Initialization: READY");
-    ESP_LOGI(TAG8, "  - Status: Waiting for device enumeration");
-    ESP_LOGI(TAG8, "  - Expected Device: QMX Radio (CDC device)");
-    ESP_LOGI(TAG8, "");
-    ESP_LOGI(TAG8, "NOTE: Full USB host stack requires ESP-IDF USB host headers");
-    ESP_LOGI(TAG8, "      Currently in placeholder mode - ready for full implementation");
-    ESP_LOGI(TAG8, "");
-    ESP_LOGI(TAG8, "Checking for USB devices...");
-    
-    // TODO: Implement full USB host stack integration
-    // When available, this would:
-    // 1. Initialize USB host library with usb_host_install()
-    // 2. Register client with usb_host_client_register()
-    // 3. Scan for CDC devices
-    // 4. Enumerate device properties
-    // 5. Open bulk IN/OUT endpoints for serial communication
-    
-    return ESP_OK;
 }
 
-bool usb_serial_host_is_connected(void) {
-    bool connected = g_usb_connected;
-    if (g_usb_initialized) {
-        ESP_LOGV(TAG8, "USB connection check: %s", connected ? "CONNECTED" : "NOT CONNECTED");
-    }
-    return connected;
+bool usb_serial_host_is_connected (void) {
+    return g_usb_connected;
 }
 
-int usb_serial_host_write(const uint8_t *data, size_t len) {
+int usb_serial_host_write (const uint8_t * data, size_t len) {
     if (!g_usb_initialized) {
-        ESP_LOGW(TAG8, "USB write attempted before initialization");
+        ESP_LOGW (TAG8, "USB write attempted before initialization");
         return -1;
     }
-    
-    if (!usb_serial_host_is_connected()) {
-        ESP_LOGW(TAG8, "USB write: device not connected");
-        return -1;
-    }
-    
-    if (!data || len == 0) {
+
+    if (!data || len == 0)
         return 0;
-    }
-    
-    ESP_LOGD(TAG8, "USB write: %d bytes (TODO: implement USB bulk transfer)", len);
-    // Example: "TX: FA24915000;" (10 bytes)
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG8, data, (len < 64 ? len : 64), ESP_LOG_DEBUG);
-    
-    // TODO: Implement USB bulk transfer
-    // When full implementation available:
-    // - Create transfer descriptor
-    // - Submit to endpoint OUT
-    // - Wait for completion
-    
-    return len;  // Placeholder: assume success
+
+    #ifdef ESP32_S3
+        if (!usb_serial_host_is_connected() || g_cdc_dev == NULL) {
+            ESP_LOGW (TAG8, "USB write: device not connected");
+            return -1;
+        }
+
+        esp_err_t ret = cdc_acm_host_data_tx_blocking (g_cdc_dev, data, len, 1000);
+        if (ret != ESP_OK) {
+            ESP_LOGW (TAG8, "USB write failed: %s", esp_err_to_name (ret));
+            return -1;
+        }
+        return (int)len;
+    #else
+        return -1;
+    #endif
 }
 
-int usb_serial_host_read(uint8_t *data, size_t len) {
+int usb_serial_host_read (uint8_t * data, size_t len) {
     if (!g_usb_initialized) {
-        ESP_LOGW(TAG8, "USB read attempted before initialization");
+        ESP_LOGW (TAG8, "USB read attempted before initialization");
         return -1;
     }
-    
-    if (!usb_serial_host_is_connected()) {
-        ESP_LOGV(TAG8, "USB read: device not connected");
-        return -1;
-    }
-    
-    if (!data || len == 0) {
+
+    if (!data || len == 0)
         return 0;
-    }
-    
+
     // Try to dequeue a packet without blocking
     usb_rx_packet_t packet;
-    if (xQueueReceive(g_usb_rx_queue, &packet, 0) == pdTRUE) {
+    if (xQueueReceive (g_usb_rx_queue, &packet, 0) == pdTRUE) {
         size_t copy_len = (packet.len < len) ? packet.len : len;
-        memcpy(data, packet.data, copy_len);
-        ESP_LOGD(TAG8, "USB read: %d bytes from queue", copy_len);
+        memcpy (data, packet.data, copy_len);
+        ESP_LOGD (TAG8, "USB read: %d bytes from queue", copy_len);
         return copy_len;
     }
-    
-    ESP_LOGV(TAG8, "USB read: no data available");
+
     return 0;  // No data available
 }
 
-esp_err_t usb_serial_host_flush(void) {
-    if (!usb_serial_host_is_connected()) {
+esp_err_t usb_serial_host_flush (void) {
+    if (!usb_serial_host_is_connected())
         return ESP_ERR_INVALID_STATE;
-    }
-    
-    // USB transfers are typically automatic, but we can add a sync point here
+
+    // USB bulk transfers are submitted synchronously by cdc_acm_host_data_tx_blocking();
+    // there is no separate flush step.
     return ESP_OK;
 }
 
-esp_err_t usb_serial_host_deinit(void) {
-    if (!g_usb_initialized) {
+esp_err_t usb_serial_host_deinit (void) {
+    if (!g_usb_initialized)
         return ESP_OK;
-    }
-    
-    ESP_LOGI(TAG8, "Deinitializing USB serial host");
-    
-    g_usb_initialized = false;
-    
-    // Wait a bit for task to complete if it exists
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
-    // Cleanup queue
+
+    ESP_LOGI (TAG8, "Deinitializing USB serial host");
+
+    g_usb_initialized = false;  // Signals usb_host_lib_task and usb_cdc_open_task to exit.
+
+    #ifdef ESP32_S3
+        if (g_cdc_dev != NULL) {
+            cdc_acm_host_close (g_cdc_dev);
+            g_cdc_dev = NULL;
+        }
+        gpio_set_level (USB_HOST_ACTIVE_LED_GPIO, 0);
+        gpio_set_level (USB_DEVICE_OPEN_LED_GPIO, 0);
+    #endif
+
+    // Give the background tasks time to notice and exit their loops.
+    vTaskDelay (pdMS_TO_TICKS (1200));
+
     if (g_usb_rx_queue) {
-        vQueueDelete(g_usb_rx_queue);
+        vQueueDelete (g_usb_rx_queue);
         g_usb_rx_queue = NULL;
     }
-    
+
     g_usb_connected = false;
-    
-    ESP_LOGI(TAG8, "USB serial host deinitialized");
+
+    ESP_LOGI (TAG8, "USB serial host deinitialized");
     return ESP_OK;
 }
 
-const char *usb_serial_host_get_status(void) {
+const char * usb_serial_host_get_status (void) {
     static char status[256];
-    
+
     if (!g_usb_initialized) {
-        snprintf(status, sizeof(status), 
-            "USB: Not initialized | Waiting for init() call");
+        snprintf (status, sizeof (status), "USB: Not initialized | Waiting for init() call");
     }
     else if (g_usb_connected) {
-        snprintf(status, sizeof(status), 
-            "USB: ✓ CONNECTED | QMX radio ready for CAT commands");
+        #ifdef ESP32_S3
+            snprintf (status, sizeof (status),
+                "USB: \xE2\x9C\x93 CONNECTED | VID=0x%04X PID=0x%04X | ready for CAT commands", g_cdc_vid, g_cdc_pid);
+        #else
+            snprintf (status, sizeof (status), "USB: \xE2\x9C\x93 CONNECTED | ready for CAT commands");
+        #endif
     }
     else {
-        snprintf(status, sizeof(status), 
-            "USB: ⚠ Initialized | Waiting for device enumeration | "
-            "Connect QMX via USB-A to host port");
+        #ifdef ESP32_S3
+            bool over_current = gpio_get_level (USB_OVER_CURRENT_GPIO) != 0;
+            if (g_device_ever_seen) {
+                snprintf (status, sizeof (status),
+                    "USB: \xE2\x9A\xA0 Device seen (VID=0x%04X PID=0x%04X) but not opened as CDC-ACM "
+                    "| last error: %s | over_current=%s",
+                    g_cdc_vid, g_cdc_pid, esp_err_to_name (g_last_open_err), over_current ? "yes" : "no");
+            }
+            else {
+                snprintf (status, sizeof (status),
+                    "USB: \xE2\x9A\xA0 Initialized | No device seen yet | over_current=%s | "
+                    "Connect QMX via USB-A to host port", over_current ? "yes" : "no");
+            }
+        #else
+            snprintf (status, sizeof (status),
+                "USB: \xE2\x9A\xA0 Initialized | Waiting for device enumeration | "
+                "Connect QMX via USB-A to host port");
+        #endif
     }
-    
+
     return status;
 }

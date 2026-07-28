@@ -82,6 +82,11 @@ async function refreshVersion() {
             detailsEl.classList.add("version-details-hidden");
             detailsEl.hidden = true;
         }
+
+        // USB Host status only applies to the ESP32-S3 USB-OTG board; hide the row
+        // entirely on other hardware rather than showing a "not supported" message.
+        const usbRow = document.getElementById("usb-host-status-row");
+        if (usbRow) usbRow.hidden = !text.startsWith("ESP32_S3");
     } catch (error) {
         versionEl.textContent = "??";
         detailsEl.classList.add("version-details-hidden");
@@ -90,15 +95,52 @@ async function refreshVersion() {
 }
 
 // ============================================================================
+// USB Host Status (ESP32-S3 USB-OTG board only)
+// ============================================================================
+// Polled while the About tab is visible. Once the USB Host library claims the
+// board's single USB PHY for host mode, the native USB serial console goes
+// dark, so this is the only way to observe QMX enumeration after that point.
+
+const USB_HOST_STATUS_POLL_MS = 3000;
+let usbHostStatusInterval = null;
+
+async function refreshUsbHostStatus() {
+    const usbRow = document.getElementById("usb-host-status-row");
+    const statusEl = document.getElementById("usb-host-status");
+    if (!usbRow || !statusEl || usbRow.hidden) return;
+
+    try {
+        const response = await fetch("/api/v1/usbHostStatus");
+        statusEl.textContent = response.ok ? await response.text() : "??";
+    } catch (error) {
+        statusEl.textContent = "??";
+    }
+}
+
+function startUsbHostStatusPolling() {
+    stopUsbHostStatusPolling();
+    refreshUsbHostStatus();
+    usbHostStatusInterval = setInterval(refreshUsbHostStatus, USB_HOST_STATUS_POLL_MS);
+}
+
+function stopUsbHostStatusPolling() {
+    if (usbHostStatusInterval) {
+        clearInterval(usbHostStatusInterval);
+        usbHostStatusInterval = null;
+    }
+}
+
+// ============================================================================
 // Page Lifecycle
 // ============================================================================
 
 // Called when About tab becomes visible
-function onAboutAppearing() {
-    refreshVersion();
+async function onAboutAppearing() {
+    await refreshVersion();  // sets usb-host-status-row's hidden state before polling starts
+    startUsbHostStatusPolling();
 }
 
 // Called when About tab is hidden
 function onAboutLeaving() {
-    // No special cleanup needed for the About tab
+    stopUsbHostStatusPolling();
 }

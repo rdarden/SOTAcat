@@ -1,6 +1,7 @@
 #include "globals.h"
 #include "kx_radio.h"
 #include "timed_lock.h"
+#include "usb_serial_host.h"
 #include "webserver.h"
 
 #include <esp_log.h>
@@ -53,4 +54,20 @@ esp_err_t handler_connectionStatus_get (httpd_req_t * req) {
     }
 
     REPLY_WITH_STRING (req, symbol, "connection status");
+}
+
+/**
+ * Handles an HTTP GET request for the ESP32-S3 USB Host status (e.g. whether a QMX
+ * has been detected as a USB CDC-ACM device). Useful since, once USB host mode
+ * claims the board's single USB PHY, the native USB serial console goes away.
+ *
+ * @param req Pointer to the HTTP request structure.
+ * @return ESP_OK on successful transmission of the status string.
+ */
+esp_err_t handler_usbHostStatus_get (httpd_req_t * req) {
+    showActivity();
+
+    ESP_LOGV (TAG8, "trace: %s()", __func__);
+
+    REPLY_WITH_STRING (req, usb_serial_host_get_status(), "usb host status");
 }

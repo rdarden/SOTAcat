@@ -50,3 +50,14 @@ CONFIG_LWIP_TCP_TMR_INTERVAL=100
 
 # --- mbedTLS ---
 CONFIG_MBEDTLS_ECP_FIXED_POINT_OPTIM=y
+
+# --- USB Host (ESP32-S3 USB-OTG board only; these symbols don't exist for targets
+# without a USB-OTG peripheral, so they're a no-op when this file seeds other boards) ---
+# QMX enumerates as a composite device that also behaves like a hub (it presents a USB
+# sound card and a CDC-ACM serial port as separate child devices); without hub support
+# the USB Host library never completes enumerating it, so it never appears at all.
+CONFIG_USB_HOST_HUBS_SUPPORTED=y
+CONFIG_USB_HOST_HUB_MULTI_LEVEL=y
+# QMX's composite (audio + CDC) configuration descriptor exceeds the default 256-byte
+# control transfer buffer.
+CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1024

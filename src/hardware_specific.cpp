@@ -8,6 +8,8 @@
 #include <cstdio>
 #include <driver/gpio.h>
 #include <driver/uart.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include <esp_log.h>
 static const char * TAG8 = "sc:hw_spec.";
@@ -144,12 +146,66 @@ void set_hardware_specific (void) {
  */
 void init_usb_if_available(void) {
     #ifdef ESP32_S3
-        // Safety rollback:
-        // Do not force USB_SEL/DEV_VBUS_EN during normal boot yet.
-        // On this board, forcing USB path selection too early can make the
-        // active console path disappear, which looks like a dead board.
-        ESP_LOGW(TAG8, "USB routing override disabled for stability (USB_SEL/DEV_VBUS_EN unchanged)");
-        ESP_LOGW(TAG8, "If needed for host tests, set USB_SEL(GPIO18)=HIGH and DEV_VBUS_EN(GPIO12)=LOW manually");
+        // Route the shared D+/D- lines to the Type-A host connector and power it, matching
+        // the sequence in Espressif's own reference implementation for this exact board
+        // (arduino-esp32 variants/esp32s3usbotg/variant.cpp: usbHostPower()/usbHostEnable()):
+        //   - BOOST_EN (GPIO13) and DEV_VBUS_EN (GPIO12) are ALTERNATE power sources for the
+        //     host port's VBUS, not both-on together: DEV_VBUS_EN passes through the incoming
+        //     VBUS from the board's own USB_DEV/power-input connector; BOOST_EN instead boosts
+        //     the onboard battery to 5V for standalone (unplugged) operation. We're powered via
+        //     the same cable used for flashing/console, so DEV_VBUS_EN is the correct source.
+        //   - LIMIT_EN (GPIO17) enables the current-limiting IC that actually gates power onto
+        //     the host connector -- without it, VBUS never reaches the port regardless of
+        //     BOOST_EN/DEV_VBUS_EN. This one is easy to miss (learned the hard way).
+        //   - USB_SEL/USB_HOST_EN (GPIO18) routes D+/D- to the Type-A host connector.
+        // Even a self-powered downstream device (like QMX) needs to see VBUS present to
+        // recognize it's attached and begin enumeration -- "self-powered" only means it
+        // doesn't draw its operating current from VBUS, not that VBUS can be left off.
+        //
+        // Note this is not what previously looked like a "brick": that was the ROM
+        // dropping into download mode because BOOT was held during a reset, unrelated
+        // to these pins. The real, unavoidable side effect of enabling USB host mode
+        // below is that the ESP32-S3's single USB PHY switches away from the native
+        // USB Serial/JTAG console, so this console connection *will* disappear once
+        // usb_serial_host_init() installs the USB Host library. A power cycle (not
+        // BOOT+RST) is what brings the console back for the next flash/monitor session.
+        // Staged rather than flipped on all at once: OVER_CURRENT was observed to read
+        // asserted persistently regardless of what (if anything) was on the host port,
+        // which looks like a fault latched by inrush current at the moment VBUS and the
+        // current limiter were enabled together. Giving VBUS a moment to settle before
+        // gating it through LIMIT_EN gives the inrush current somewhere to go first.
+        gpio_set_direction((gpio_num_t)13, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)13, 0);  // BOOST_EN: off, we're using DEV_VBUS_EN instead
+        gpio_set_direction((gpio_num_t)17, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)17, 0);  // LIMIT_EN: start disabled
+        gpio_set_direction((gpio_num_t)12, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)12, 0);  // DEV_VBUS_EN: start disabled
+        vTaskDelay(pdMS_TO_TICKS(50));
+
+        gpio_set_level((gpio_num_t)12, 1);  // DEV_VBUS_EN: pass incoming VBUS through to host port
+        vTaskDelay(pdMS_TO_TICKS(50));      // let VBUS settle before gating it through the limiter
+        gpio_set_level((gpio_num_t)17, 1);  // LIMIT_EN: enable the current-limiting IC
+        gpio_set_direction((gpio_num_t)18, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)18, 1);  // USB_SEL: route D+/D- to Type-A host connector
+        ESP_LOGI(TAG8, "BOOST_EN=LOW, DEV_VBUS_EN=HIGH, LIMIT_EN=HIGH, USB_SEL=HIGH (VBUS+data live on host port)");
+
+        // OVER_CURRENT (GPIO21) is a diagnostic input: high means the current-limiting IC
+        // tripped. Console is normally gone by the time this would matter, but log it in
+        // case it's ever visible (e.g. over the debug UART bridge instead of native USB).
+        // Pull-up added after observing this read HIGH with nothing plugged into the host
+        // port at all -- that's not a real fault (no load, nothing to overcurrent), so the
+        // pin was almost certainly floating rather than being actively driven low by an
+        // idle/no-fault open-drain signal. Bias it explicitly rather than trust a float.
+        gpio_set_direction((gpio_num_t)21, GPIO_MODE_INPUT);
+        // Diagnostic: temporarily pull-down instead of pull-up, to tell whether this pin is
+        // genuinely floating (reading would flip to LOW) or actively driven HIGH by something
+        // regardless of our bias (reading would stay HIGH) -- OVER_CURRENT hasn't changed
+        // across zero load, QMX connected, or three different cables, which doesn't look
+        // like a real per-connection fault.
+        gpio_set_pull_mode((gpio_num_t)21, GPIO_PULLDOWN_ONLY);
+        vTaskDelay(pdMS_TO_TICKS(50));  // let the power path settle before sampling
+        if (gpio_get_level((gpio_num_t)21))
+            ESP_LOGW(TAG8, "OVER_CURRENT asserted on USB host port!");
 
         ESP_LOGI(TAG8, "");
         ESP_LOGI(TAG8, "╔════════════════════════════════════════════════════╗");

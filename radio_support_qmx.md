@@ -11,7 +11,7 @@ The goal is to add QMX support to the SOTAcat firmware while retaining full comp
 - `QMXRadioDriver` is integrated into runtime driver selection and handles frequency, mode, power, volume, TX/RX, keyer message send, and time sync.
 - QMX-specific guardrails are active in the web UI: `Min Power`, `Max Power`, `Tune ATU`, and FM mode are disabled when QMX is detected.
 - QMX is treated as self-powered in this project.
-- ESP32-S3 USB host board routing pins are configured (`USB_SEL` high, `DEV_VBUS_EN` low), but the USB host transport layer is still a placeholder and not yet a complete CDC data path.
+- ESP32-S3 USB host board routing pins are configured (`USB_SEL` high, `DEV_VBUS_EN`/`BOOST_EN` high to supply VBUS), and the USB host transport layer uses the real `usb_host`/`usb_host_cdc_acm` components (see below), not just a placeholder.
 
 ## Documentation references
 - QMX web page: https://qrp-labs.com/qmx.html
@@ -112,8 +112,14 @@ The code currently supports:
 ## ESP32-S3 USB host board policy for self-powered QMX
 For the ESP32-S3 USB-OTG board target, startup now applies the following policy:
 - `USB_SEL` is set high to route D+/D- to the host connector path.
-- `DEV_VBUS_EN` is set low so SOTAcat does not source VBUS to the radio.
-- USB host init logs that the self-powered policy does not require external VBUS detect in host-mode PHY defaults.
+- `DEV_VBUS_EN` and `LIMIT_EN` are set high so the board's incoming VBUS is passed through (via the
+  current-limiting IC) to the host connector; `BOOST_EN` (the alternate, battery-powered VBUS
+  source) stays low since we're cable-powered. QMX being self-powered means it doesn't draw its
+  operating current from VBUS, but it still needs VBUS present to detect the USB attach and begin
+  enumeration.
+- The onboard USB-to-serial debug bridge (separate Micro-USB connector) is wired to UART0
+  (GPIO43/44) -- the same pins this project already uses for the wired CAT-radio UART -- so it
+  can't be used as a second console without conflicting with that.
 
 Current limitation:
 - USB host serial transport is not fully implemented yet (enumeration and endpoint transfer path are TODO).

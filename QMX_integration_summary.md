@@ -8,7 +8,12 @@ This document summarizes the work completed for adding QMX support and a DigiPi-
 - The primary working path remains UART CAT (direct serial, or via the DigiPi/Pi bridge).
 - ESP32-S3 board routing is now explicitly configured for USB host experiments:
   - `USB_SEL` (GPIO18) is forced HIGH to route D+/D- to the Type-A host path.
-  - `DEV_VBUS_EN` (GPIO12) is forced LOW so the board does not source VBUS to the host connector.
+  - `DEV_VBUS_EN` (GPIO12) is forced HIGH (passes the board's own incoming VBUS through to the
+    host connector) and `LIMIT_EN` (GPIO17, current-limiting IC enable -- easy to miss, and
+    without it VBUS never reaches the connector) is forced HIGH. `BOOST_EN` (GPIO13, the
+    alternate battery-boost power source) stays LOW since we're USB-cable-powered.
+    Supplying VBUS is required for USB enumeration even though QMX is self-powered, since a
+    device still needs to see VBUS present to recognize it's attached.
 - USB host stack code exists as a placeholder scaffold (`usb_serial_host.cpp`) and initializes state/logging, but full CDC enumeration and data transfer are not implemented yet.
 
 ## What was added

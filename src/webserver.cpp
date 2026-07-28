@@ -97,6 +97,7 @@ static const api_handler_t api_handlers[] = {
     // method     api_name            handler_func                  requires_radio
     // ========  ================== =============================== =============
     {HTTP_GET,  "connectionStatus", handler_connectionStatus_get,   false}, // disconnected radio /is/ a status
+    {HTTP_GET,  "usbHostStatus",    handler_usbHostStatus_get,      false},
     {HTTP_GET,  "batteryInfo",      handler_batteryInfo_get,        false},
     {HTTP_GET,  "rssi",             handler_rssi_get,               false},
     {HTTP_GET,  "frequency",        handler_frequency_get,          true },
