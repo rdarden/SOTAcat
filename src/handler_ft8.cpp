@@ -430,7 +430,8 @@ static void xmit_ft8_task (void * pvParameter) {
             ft8_tone_active = true;
 
             long first_frequency = info->baseFreq + (long)std::round (info->tones[0] * 6.25);
-            kxRadio.ft8_set_tone (info->baseFreq, first_frequency);
+            ESP_LOGI (TAG8, "FT8 sending first tone: base=%ld, freq=%ld", info->baseFreq, first_frequency);
+            kxRadio.ft8_set_tone (info->rfFreq, info->audioFreq, first_frequency);
 
             timer_started = (esp_timer_start_periodic (ft8_tone_timer, 160000) == ESP_OK);
             if (!timer_started) {
@@ -445,12 +446,13 @@ static void xmit_ft8_task (void * pvParameter) {
 
                 Ft8ToneEvent event;
                 if (xQueueReceive (ft8_tone_queue, &event, pdMS_TO_TICKS (200)) != pdTRUE) {
-                    ESP_LOGW (TAG8, "FT8 tone queue timeout");
+                    ESP_LOGW (TAG8, "FT8 tone queue timeout at tone %d", j);
                     ft8_request_cancel();
                     break;
                 }
 
-                kxRadio.ft8_set_tone (info->baseFreq, event.frequency);
+                ESP_LOGD (TAG8, "FT8 tone %d: base=%ld, freq=%ld", j, info->baseFreq, event.frequency);
+                kxRadio.ft8_set_tone (info->rfFreq, info->audioFreq, event.frequency);
                 ESP_ERROR_CHECK (esp_task_wdt_reset());
             }
 
@@ -497,6 +499,14 @@ static void xmit_ft8_task (void * pvParameter) {
     return;
 
 cleanup:
+    // CRITICAL: Exit MD8 mode even if transmission didn't start
+    // If ft8_prepare() was called but transmission was cancelled before tone_on,
+    // we MUST call tone_off to exit MD8 mode and return radio to normal CAT mode
+    if (ft8_tone_active || Ft8RadioExclusive) {
+        ESP_LOGI (TAG8, "FT8 cleanup: Exiting MD8 mode via ft8_tone_off");
+        kxRadio.ft8_tone_off();
+    }
+    
     ft8_set_task_in_progress (false);
     if (timer_started)
         esp_timer_stop (ft8_tone_timer);
@@ -779,7 +789,7 @@ static bool ft8_prepare_internal (const ft8_prepare_request_t & request, const c
         // Prepare the radio to send the FT8 FSK tones using CW tone with proper power setting.
         long baseFreq = request.rfFreq + request.audioFreq;
 
-        if (!kxRadio.ft8_prepare (baseFreq)) {
+        if (!kxRadio.ft8_prepare (request.rfFreq, request.audioFreq)) {
             kxRadio.restore_radio_state (kx_state, 2);
             delete kx_state;
             delete[] tones;
@@ -854,18 +864,18 @@ esp_err_t handler_prepareft8_post (httpd_req_t * req) {
     // this handler, including REPLY_WITH_FAILURE paths inside STANDARD_DECODE_QUERY.
 
     STANDARD_DECODE_QUERY (req, unsafe_buf);
-    gpio_set_level (LED_BLUE, LED_ON);  // LED on
+    if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_ON);  // LED on
 
     ft8_prepare_request_t request;
     if (!ft8_parse_prepare_request_from_query (unsafe_buf, request)) {
-        gpio_set_level (LED_BLUE, LED_OFF);
+        if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
         REPLY_WITH_FAILURE (req, HTTPD_404_NOT_FOUND, "parameter parsing error");
     }
 
     ft8_task_pack_t * existingConfig = ft8_get_config_info();
     if (existingConfig != NULL) {
         if (ft8_get_cancel_deadline_us() <= 0) {
-            gpio_set_level (LED_BLUE, LED_OFF);
+            if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
             REPLY_WITH_FAILURE (req, HTTPD_500_INTERNAL_SERVER_ERROR, "ft8 cleanup in progress");
         }
 
@@ -874,24 +884,24 @@ esp_err_t handler_prepareft8_post (httpd_req_t * req) {
         // and reconfiguring the radio.
         if (ft8_is_same_prepare_request (request)) {
             ft8_extend_prepare_deadline();
-            gpio_set_level (LED_BLUE, LED_OFF);
+            if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
             CommandInProgress.store (false, std::memory_order_release);
             commandGuard.dismiss();
             REPLY_WITH_SUCCESS();
         }
 
-        gpio_set_level (LED_BLUE, LED_OFF);
+        if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
         REPLY_WITH_FAILURE (req, HTTPD_500_INTERNAL_SERVER_ERROR, "ft8 already prepared with different parameters");
     }
 
     const char * prepare_error = NULL;
     if (!ft8_prepare_internal (request, &prepare_error)) {
-        gpio_set_level (LED_BLUE, LED_OFF);
+        if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
         REPLY_WITH_FAILURE (req, HTTPD_500_INTERNAL_SERVER_ERROR, prepare_error ? prepare_error : "failed to prepare radio for ft8");
     }
 
     // Send a response back
-    gpio_set_level (LED_BLUE, LED_OFF);
+    if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
     CommandInProgress.store (false, std::memory_order_release);
     commandGuard.dismiss();
     REPLY_WITH_SUCCESS();

@@ -39,10 +39,13 @@
 - Handles command/response protocol
 
 ### FT8 Synthesis
-- Direct FSK generation via VFO manipulation
+- Per-radio CAT driver implementation
+- DIGI mode (MD6) for QMX, USB mode (MD0) for KX2/KX3
+- Shaped Blackman-Harris RF envelope for key-up/key-down
 - No audio required
 - Computes and transmits 15-second FT8 sequence
 - API: `/api/v1/prepareft8`, `/api/v1/ft8`, `/api/v1/cancelft8`
+- See [Radio-Drivers.md](Radio-Drivers.md) for implementation details
 
 ### SOTAmat Integration
 - Bidirectional communication with SOTAmat app
@@ -88,5 +91,5 @@ Any new file added under `src/web/` must be wired in *two* places — see [Web-U
 
 ---
 
-[← BUILD](BUILD.md) · [Web UI →](Web-UI.md)
+[← BUILD](BUILD.md) · [Radio-Drivers →](Radio-Drivers.md) · [Web UI →](Web-UI.md)
 

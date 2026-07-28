@@ -328,9 +328,12 @@ bool KH1RadioDriver::restore_radio_state (KXRadio & radio, const kx_state_t * st
     return set_frequency (radio, state->vfo_a_freq, tries);
 }
 
-bool KH1RadioDriver::ft8_prepare (KXRadio & radio, long base_freq) {
+bool KH1RadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
+    // For KH1, the frequency should be set to rfFreq + audioFreq (USB center frequency)
+    long tuned_freq = rfFreq + audioFreq;
+    
     radio.put_to_kx_command_string ("FO00;", 1);
-    return set_frequency (radio, base_freq, SC_KX_COMMUNICATION_RETRIES);
+    return set_frequency (radio, tuned_freq, SC_KX_COMMUNICATION_RETRIES);
 }
 
 void KH1RadioDriver::ft8_tone_on (KXRadio & radio) {
@@ -344,10 +347,12 @@ void KH1RadioDriver::ft8_tone_off (KXRadio & radio) {
     uart_write_bytes (UART_NUM, "FO99;", sizeof ("FO99;") - 1);
 }
 
-void KH1RadioDriver::ft8_set_tone (KXRadio & radio, long base_freq, long frequency) {
+void KH1RadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) {
     (void)radio;
+    (void)audioFreq;
+    
     char     command[8];
-    unsigned offset = static_cast<unsigned> ((frequency - base_freq) % 100);
+    unsigned offset = static_cast<unsigned> ((frequency - rfFreq) % 100);
     snprintf (command, sizeof (command), "FO%02u;", offset);
     uart_write_bytes (UART_NUM, command, 5);
 }

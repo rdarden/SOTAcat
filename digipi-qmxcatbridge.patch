@@ -1,0 +1,72 @@
+diff --git a/var/www/html/index.php b/var/www/html/index.php
+index 66861e8..545dda2 100755
+--- a/var/www/html/index.php
++++ b/var/www/html/index.php
+@@ -105,6 +105,16 @@ if (isset($_POST["node"])) {
+   }
+ }
+ 
++if (isset($_POST["qmxcatbridge"])) {
++  $submit = $_POST["qmxcatbridge"];
++  if ( $submit == 'on' ) {
++      $output = shell_exec('sudo systemctl start qmxcatbridge');
++  }
++  if ( $submit == 'off' ) {
++      $output = shell_exec('sudo systemctl stop qmxcatbridge');
++  }
++}
++
+ if (isset($_POST["wsjtx"])) {
+   $submit = $_POST["wsjtx"];
+   if ( $submit == 'on' ) {
+@@ -338,6 +348,42 @@ echo '</font>';
+ echo '</td></tr>';
+ 
+ 
++#-- QMX CAT Bridge -----------------------------------
++
++echo "<tr>";
++$output = shell_exec('systemctl is-active qmxcatbridge');
++$output = chop($output);
++  if ($output == "active")
++  {
++     echo '<td bgcolor="lightgreen">';
++     $checked = "checked";
++  }
++  elseif ($output == "failed")
++  {
++     echo '<td bgcolor="red">';
++     $checked = "";
++  }
++  else
++  {
++     echo '<td bgcolor="lightgrey">';
++     $checked = "";
++  }
++echo '</td>';
++echo '<td>';
++echo '<font size=+1>QMX CAT Bridge</font></td>';
++echo '<td nowrap>';
++echo '<form action="index.php" method="post">';
++echo '<label class="switch switch-light">';
++echo '  <input type="hidden" name="qmxcatbridge" value="off">';
++echo "  <input onChange='this.form.submit()' class='switch-input' type='checkbox' name='qmxcatbridge' value='on'  $checked />";
++echo '  <span class="switch-label" ></span> ';
++echo '  <span class="switch-handle"></span> ';
++echo '</label>';
++echo '</form>';
++echo '</font>';
++echo '</td></tr>';
++
++
+ #-- Linux NODE AX.25 ------------------------------------
+ 
+ echo "<tr>";
+@@ -681,6 +727,7 @@ $output = shell_exec('sudo systemctl reset-failed tracker 2> /dev/null');
+ $output = shell_exec('sudo systemctl reset-failed digipeater 2> /dev/null');
+ $output = shell_exec('sudo systemctl reset-failed tnc 2> /dev/null');
+ $output = shell_exec('sudo systemctl reset-failed node 2> /dev/null'); 
++$output = shell_exec('sudo systemctl reset-failed qmxcatbridge 2> /dev/null'); 
+ $output = shell_exec('sudo systemctl reset-failed winlinkrms 2> /dev/null'); 
+ $output = shell_exec('sudo systemctl reset-failed pat 2> /dev/null'); 
+ $output = shell_exec('sudo systemctl reset-failed js8call 2> /dev/null'); 

@@ -124,8 +124,8 @@ bool KXRadioDriver::set_volume (KXRadio & radio, long delta) {
     if (!radio.get_volume (current_volume))
         return false;
 
-    // Calculate new volume, clamped to 0-255
-    long new_volume = current_volume + delta * 20;
+    // Calculate new volume, clamped to 0-255. Volume is absolute in 0.25 dB steps.
+    long new_volume = current_volume + delta;
     if (new_volume < 0)
         new_volume = 0;
     if (new_volume > 255)
@@ -336,11 +336,14 @@ bool KXRadioDriver::restore_radio_state (KXRadio & radio, const kx_state_t * sta
     return true;
 }
 
-bool KXRadioDriver::ft8_prepare (KXRadio & radio, long base_freq) {
+bool KXRadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
+    // For KX2/KX3, the frequency should be set to rfFreq + audioFreq (USB center frequency)
+    long tuned_freq = rfFreq + audioFreq;
+    
     bool ok = true;
     ok &= radio.put_to_kx ("FR", 1, 0, SC_KX_COMMUNICATION_RETRIES);
     ok &= radio.put_to_kx ("FT", 1, 0, SC_KX_COMMUNICATION_RETRIES);
-    ok &= radio.put_to_kx ("FA", 11, base_freq, SC_KX_COMMUNICATION_RETRIES);
+    ok &= radio.put_to_kx ("FA", 11, tuned_freq, SC_KX_COMMUNICATION_RETRIES);
     ok &= radio.put_to_kx ("MD", 1, MODE_CW, SC_KX_COMMUNICATION_RETRIES);
     ok &= radio.put_to_kx ("AP", 1, 1, SC_KX_COMMUNICATION_RETRIES);
     if (!ok)
@@ -378,9 +381,10 @@ void KXRadioDriver::ft8_tone_off (KXRadio & radio) {
     uart_write_bytes (UART_NUM, "SWH16;", sizeof ("SWH16;") - 1);
 }
 
-void KXRadioDriver::ft8_set_tone (KXRadio & radio, long base_freq, long frequency) {
+void KXRadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) {
     (void)radio;
-    (void)base_freq;
+    (void)rfFreq;
+    (void)audioFreq;
 
     char command[16];
     snprintf (command, sizeof (command), "FA%011ld;", frequency);

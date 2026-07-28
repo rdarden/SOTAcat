@@ -40,8 +40,8 @@ class IRadioDriver {
     virtual bool get_radio_state (KXRadio & radio, kx_state_t * state) = 0;
     virtual bool restore_radio_state (KXRadio & radio, const kx_state_t * state, int tries) = 0;
 
-    virtual bool ft8_prepare (KXRadio & radio, long base_freq) = 0;
+    virtual bool ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) = 0;
     virtual void ft8_tone_on (KXRadio & radio) = 0;
     virtual void ft8_tone_off (KXRadio & radio) = 0;
-    virtual void ft8_set_tone (KXRadio & radio, long base_freq, long frequency) = 0;
+    virtual void ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) = 0;
 };

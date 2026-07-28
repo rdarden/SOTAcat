@@ -2,6 +2,8 @@
 #include "hardware_specific.h"
 #include "radio_driver_kh1.h"
 #include "radio_driver_kx.h"
+#include "radio_driver_qmx.h"
+#include "radio_detection.h"
 #include "timed_lock.h"
 
 #include <cstdlib>
@@ -29,6 +31,7 @@ KXRadio & kxRadio = KXRadio::getInstance();
 
 static KXRadioDriver  g_kx_driver;
 static KH1RadioDriver g_kh1_driver;
+static QMXRadioDriver g_qmx_driver;
 
 // UART timeouts for radio commands
 // Short commands (status checks): 100ms is sufficient
@@ -77,7 +80,8 @@ static bool uart_get_command (const char * command, char * response, int expecte
     // Return if valid response achieved
     if (response[0] == command[0] && response[1] == command[1] &&  // got what we asked for
         returned_chars == expected_chars &&                        // as much as we wanted
-        response[expected_chars - 1] == ';')                       // well-terminated
+        (response[expected_chars - 1] == ';' ||
+         (strncmp (command, "AG", 2) == 0 && response[0] == 'A' && response[1] == 'G')))
         return true;                                               // success
 
     // Invalid response, retry
@@ -114,6 +118,28 @@ static long parse_response (const char * response, int num_digits) {
     return -1;  // Invalid response size
 }
 
+static bool probe_for_qmx () {
+    char qmx_response[64] = {0};
+
+    ESP_LOGD (TAG8, "Entering probe_for_qmx()");
+    uart_flush (UART_NUM);
+    uart_write_bytes (UART_NUM, "VN;", 3);
+
+    int returned_chars = uart_read_bytes (UART_NUM, qmx_response, sizeof (qmx_response) - 1, pdMS_TO_TICKS (250));
+    if (returned_chars <= 0) {
+        ESP_LOGV (TAG8, "QMX probe: no response");
+        return false;
+    }
+
+    qmx_response[returned_chars] = '\0';
+    ESP_LOGI (TAG8, "QMX probe response (%d chars): '%s'", returned_chars, qmx_response);
+    bool is_qmx = looks_like_qmx_response (qmx_response, returned_chars);
+    if (!is_qmx)
+        ESP_LOGV (TAG8, "QMX probe did not match QMX response");
+
+    return is_qmx;
+}
+
 KXRadio::KXRadio()
     : m_mutex (nullptr)
     , m_is_connected (false)
@@ -138,6 +164,8 @@ TimedLock KXRadio::timed_lock (TickType_t timeout_ms, const char * operation) {
 void KXRadio::select_driver() {
     if (m_radio_type == RadioType::KH1)
         m_driver = &g_kh1_driver;
+    else if (m_radio_type == RadioType::QMX)
+        m_driver = &g_qmx_driver;
     else
         m_driver = &g_kx_driver;
 }
@@ -163,8 +191,8 @@ int KXRadio::connect() {
     if (!is_locked())
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
-    // Moved the 9600 baud rate to the first position since KH only supports 9600 baud.
-    int    baud_rates[] = {9600, 38400, 19200, 4800};
+    // Try 38400 baud first (QMX standard), then fall back to other rates
+    int    baud_rates[] = {38400, 9600, 19200, 4800};
     size_t num_rates    = sizeof (baud_rates) / sizeof (baud_rates[0]);
 
     // Install the UART driver using an event queue to handle UART events
@@ -172,7 +200,7 @@ int KXRadio::connect() {
 
     // Configure the pins for UART2 (Serial2)
     uart_config_t uart_config = {
-        .baud_rate           = baud_rates[0],
+        .baud_rate           = 38400,  // Start with 38400 for QMX
         .data_bits           = UART_DATA_8_BITS,
         .parity              = UART_PARITY_DISABLE,
         .stop_bits           = UART_STOP_BITS_1,
@@ -191,7 +219,8 @@ int KXRadio::connect() {
     uint8_t buffer[256];
     while (true) {
         for (size_t i = 0; i < num_rates; ++i) {
-            uart_set_baudrate (UART_NUM, baud_rates[i]);  // Change baud rate
+            uart_set_baudrate (UART_NUM, baud_rates[i]);
+            ESP_LOGI (TAG8, "Trying baud rate: %d", baud_rates[i]);
             vTaskDelay (pdMS_TO_TICKS (250));             // Delay for stability before next try
 
             if (baud_rates[i] == 9600) {
@@ -205,7 +234,7 @@ int KXRadio::connect() {
                     ESP_LOGV (TAG8, "received %d bytes: %s", length, buffer);
 
                     if (strstr ((char *)buffer, "KH1;") != NULL) {
-                        ESP_LOGI (TAG8, "detected KH1 radio");
+                        ESP_LOGI (TAG8, "detected KH1 radio at 9600 baud");
                         m_radio_type   = RadioType::KH1;
                         m_is_connected = true;
                         select_driver();
@@ -213,8 +242,19 @@ int KXRadio::connect() {
                         return baud_rates[i];
                     }
                 }
-                else
+                else {
                     ESP_LOGI (TAG8, "no response received for baud rate %d", baud_rates[i]);
+                }
+            }
+
+            ESP_LOGD (TAG8, "Calling probe_for_qmx() at baud rate %d", baud_rates[i]);
+            if (probe_for_qmx()) {
+                ESP_LOGI (TAG8, "QMX radio detected at baud rate %d", baud_rates[i]);
+                m_radio_type   = RadioType::QMX;
+                m_is_connected = true;
+                select_driver();
+                empty_kx_input_buffer (100);
+                return baud_rates[i];
             }
 
             uart_flush (UART_NUM);
@@ -367,6 +407,7 @@ bool KXRadio::put_to_kx (const char * command, int num_digits, long value, int t
 
     if (tries <= 0) {
         // simply write the command to the radio
+        ESP_LOGI (TAG8, "CAT TX (no verify): '%s'", request);
         uart_flush (UART_NUM);
         uart_write_bytes (UART_NUM, request, num_digits + 3);
         return true;
@@ -374,6 +415,7 @@ bool KXRadio::put_to_kx (const char * command, int num_digits, long value, int t
 
     // validate the write was successful
     for (int attempt = 0; attempt < tries; attempt++) {
+        ESP_LOGI (TAG8, "CAT TX: '%s'", request);
         uart_flush (UART_NUM);
         uart_write_bytes (UART_NUM, request, num_digits + 3);
 
@@ -489,6 +531,7 @@ bool KXRadio::put_to_kx_command_string (const char * command, int tries) {
     if (!is_locked())
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
+    ESP_LOGI (TAG8, "CAT TX (direct): '%s'", command);
     uart_flush (UART_NUM);
     uart_write_bytes (UART_NUM, command, strlen (command));
 
@@ -540,7 +583,7 @@ bool KXRadio::put_to_kx_command_string (const char * command, int tries) {
             m_driver->name (*this, ##__VA_ARGS__);                         \
     }
 // clang-format off
-DELEGATE_BOOL (ft8_prepare,         (long base_freq),                         base_freq)
+DELEGATE_BOOL (ft8_prepare,         (long rfFreq, int audioFreq),                         rfFreq, audioFreq)
 DELEGATE_BOOL (get_frequency,       (long & out_hz),                          out_hz)
 DELEGATE_BOOL (get_mode,            (radio_mode_t & out_mode),                out_mode)
 DELEGATE_BOOL (get_power,           (long & out_power),                       out_power)
@@ -561,7 +604,7 @@ DELEGATE_BOOL (tune_atu,            ())
 DELEGATE_BOOL_CONST (supports_keyer)
 DELEGATE_BOOL_CONST (supports_volume)
 
-DELEGATE_VOID (ft8_set_tone, (long base_freq, long frequency), base_freq, frequency)
+DELEGATE_VOID (ft8_set_tone, (long rfFreq, int audioFreq, long frequency), rfFreq, audioFreq, frequency)
 DELEGATE_VOID (ft8_tone_off, ())
 DELEGATE_VOID (ft8_tone_on,  ())
 // clang-format on
@@ -586,7 +629,7 @@ void KXRadio::detect_radio_type() {
     if (!is_locked())
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
-    if (m_radio_type == RadioType::KH1)
+    if (m_radio_type == RadioType::KH1 || m_radio_type == RadioType::QMX)
         return;
 
     char response[17] = {0};
@@ -619,8 +662,15 @@ void KXRadio::detect_radio_type() {
         }
     }
     else {
-        m_radio_type = RadioType::UNKNOWN;
-        ESP_LOGE (TAG8, "failed to get OM response for radio type detection");
+        ESP_LOGW (TAG8, "OM response failed; attempting QMX probe fallback");
+        if (probe_for_qmx()) {
+            m_radio_type = RadioType::QMX;
+            ESP_LOGI (TAG8, "detected QMX radio in detect_radio_type fallback");
+        }
+        else {
+            m_radio_type = RadioType::UNKNOWN;
+            ESP_LOGE (TAG8, "failed to get OM response for radio type detection");
+        }
         select_driver();
     }
 }

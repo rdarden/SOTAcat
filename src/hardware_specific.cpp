@@ -72,31 +72,49 @@ void set_hardware_specific (void) {
     LED_OFF = 1;
     LED_ON  = 0;
 
+    // Default UART configuration (will be overridden for specific hardware below)
     UART_NUM = UART_NUM_1;
-
     UART2_RX_PIN = ((gpio_num_t)20);
     LED_BLUE     = ((gpio_num_t)10);
     ADC_BATTERY  = 0;
 
-    HW_TYPE = detect_hardware_type();
-    switch (HW_TYPE) {
-    case SOTAcat_HW_Type::AB6D_1:
-        HW_TYPE_STR  = "AB6D_1";
-        UART2_TX_PIN = ((gpio_num_t)21);
-        LED_RED_SUPL = ((gpio_num_t)9);
-        LED_RED      = ((gpio_num_t)8);
-        break;
-    case SOTAcat_HW_Type::K5EM_1:
-        HW_TYPE_STR  = "K5EM_1";
-        UART2_TX_PIN = ((gpio_num_t)4);  // deconflict with the fsbl outputs
-        LED_RED      = ((gpio_num_t)9);
-        LED_RED_SUPL = ((gpio_num_t)-1);  // remove second control line for red/amber LED
-        USB_DET_PIN  = ((gpio_num_t)3);   // add USB detection
-        I2C_SCL_PIN  = ((gpio_num_t)7);   // add I2C/SMBus battery monitor
-        I2C_SDA_PIN  = ((gpio_num_t)6);   // add I2C/SMBus battery monitor
-        break;
-    default:
-        ESP_LOGE (TAG8, "unknown hardware");
-        break;
-    }
+    // Check if we're running bare XIAO FIRST, before any other detection
+    #ifdef SEEED_XIAO
+        // BARE XIAO ESP32C3 uses UART0 with GPIO20/GPIO21
+        UART_NUM = UART_NUM_0;
+        UART2_TX_PIN = ((gpio_num_t)21);  // GPIO21 = D6 (TX)
+        UART2_RX_PIN = ((gpio_num_t)20);  // GPIO20 = D7 (RX)
+        HW_TYPE = SOTAcat_HW_Type::K5EM_1;  // Use K5EM_1 type to avoid inversion
+        HW_TYPE_STR = "XIAO_BARE";
+        LED_RED = ((gpio_num_t)-1);  // No red LED on bare board
+        LED_RED_SUPL = ((gpio_num_t)-1);  // No supplementary LED
+        USB_DET_PIN = ((gpio_num_t)-1);  // No USB detection pin
+        I2C_SCL_PIN = ((gpio_num_t)-1);  // No I2C on bare board
+        I2C_SDA_PIN = ((gpio_num_t)-1);  // No I2C on bare board
+        ESP_LOGI (TAG8, "Bare XIAO ESP32C3 detected");
+    #else
+        // Production hardware detection
+        HW_TYPE = detect_hardware_type();
+        
+        switch (HW_TYPE) {
+        case SOTAcat_HW_Type::AB6D_1:
+            HW_TYPE_STR  = "AB6D_1";
+            UART2_TX_PIN = ((gpio_num_t)21);
+            LED_RED_SUPL = ((gpio_num_t)9);
+            LED_RED      = ((gpio_num_t)8);
+            break;
+        case SOTAcat_HW_Type::K5EM_1:
+            HW_TYPE_STR  = "K5EM_1";
+            UART2_TX_PIN = ((gpio_num_t)4);  // deconflict with the fsbl outputs
+            LED_RED      = ((gpio_num_t)9);
+            LED_RED_SUPL = ((gpio_num_t)-1);  // remove second control line for red/amber LED
+            USB_DET_PIN  = ((gpio_num_t)3);   // add USB detection
+            I2C_SCL_PIN  = ((gpio_num_t)7);   // add I2C/SMBus battery monitor
+            I2C_SDA_PIN  = ((gpio_num_t)6);   // add I2C/SMBus battery monitor
+            break;
+        default:
+            ESP_LOGE (TAG8, "unknown hardware");
+            break;
+        }
+    #endif
 }

@@ -2,7 +2,7 @@
 
 #include "radio_driver.h"
 
-class KH1RadioDriver : public IRadioDriver {
+class QMXRadioDriver : public IRadioDriver {
   public:
     bool supports_keyer () const override;
     bool supports_volume () const override;
@@ -36,4 +36,8 @@ class KH1RadioDriver : public IRadioDriver {
     void ft8_tone_on (KXRadio & radio) override;
     void ft8_tone_off (KXRadio & radio) override;
     void ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) override;
+
+  private:
+    long m_ft8_rf_freq    = 0;  // RF frequency for FT8 transmission
+    int  m_ft8_audio_freq = 0;  // Audio center frequency for FT8 tones
 };

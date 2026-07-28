@@ -19,26 +19,30 @@ void enter_deep_sleep () {
     ESP_LOGI (TAG8, "adc is shutdown.");
 
     // Return all the GPIO pins to their isolated state so that there isn't current drain when sleeping
-    gpio_set_level (LED_BLUE, LED_OFF);
-    gpio_set_direction (LED_BLUE, GPIO_MODE_INPUT);
-    gpio_pullup_dis (LED_BLUE);
-    gpio_pulldown_dis (LED_BLUE);
+    if (LED_BLUE != ((gpio_num_t)-1)) {
+        gpio_set_level (LED_BLUE, LED_OFF);
+        gpio_set_direction (LED_BLUE, GPIO_MODE_INPUT);
+        gpio_pullup_dis (LED_BLUE);
+        gpio_pulldown_dis (LED_BLUE);
+    }
 
-    gpio_set_level (LED_RED, LED_OFF);
-    gpio_set_direction (LED_RED, GPIO_MODE_INPUT);
-    gpio_pullup_dis (LED_RED);
-    gpio_pulldown_dis (LED_RED);
+    if (LED_RED != ((gpio_num_t)-1)) {
+        gpio_set_level (LED_RED, LED_OFF);
+        gpio_set_direction (LED_RED, GPIO_MODE_INPUT);
+        gpio_pullup_dis (LED_RED);
+        gpio_pulldown_dis (LED_RED);
+    }
 
-    if (LED_RED_SUPL > 0) {
+    if (LED_RED_SUPL != ((gpio_num_t)-1)) {
         gpio_set_direction (LED_RED_SUPL, GPIO_MODE_INPUT);
         gpio_pullup_dis (LED_RED_SUPL);
         gpio_pulldown_dis (LED_RED_SUPL);
     }
 
 #ifndef SEEED_XIAO
-    rtc_gpio_isolate (LED_BLUE);
-    rtc_gpio_isolate (LED_RED);
-    rtc_gpio_isolate (LED_RED_SUPL);
+    if (LED_BLUE != ((gpio_num_t)-1)) rtc_gpio_isolate (LED_BLUE);
+    if (LED_RED != ((gpio_num_t)-1)) rtc_gpio_isolate (LED_RED);
+    if (LED_RED_SUPL != ((gpio_num_t)-1)) rtc_gpio_isolate (LED_RED_SUPL);
 #endif
     ESP_LOGI (TAG8, "all gpio pins off and isolated.");
 

@@ -88,14 +88,18 @@ void setup () {
     set_hardware_specific();
 
     //  Turn on the board LED to indicate that we are starting up
-    gpio_set_direction (LED_BLUE, GPIO_MODE_OUTPUT);
-    gpio_set_direction (LED_RED, GPIO_MODE_OUTPUT);
-    if (LED_RED_SUPL > 0) {
+    if (LED_BLUE != ((gpio_num_t)-1)) {
+        gpio_set_direction (LED_BLUE, GPIO_MODE_OUTPUT);
+        gpio_set_level (LED_BLUE, LED_ON);
+    }
+    if (LED_RED != ((gpio_num_t)-1)) {
+        gpio_set_direction (LED_RED, GPIO_MODE_OUTPUT);
+        gpio_set_level (LED_RED, LED_ON);
+    }
+    if (LED_RED_SUPL != ((gpio_num_t)-1)) {
         gpio_set_direction (LED_RED_SUPL, GPIO_MODE_OUTPUT);
         gpio_set_level (LED_RED_SUPL, 1);
     }
-    gpio_set_level (LED_BLUE, LED_ON);
-    gpio_set_level (LED_RED, LED_ON);
 
     UBaseType_t currentPriority = uxTaskPriorityGet (NULL);
     ESP_LOGI (TAG8, "current setup() task priority is %d", currentPriority);
@@ -103,9 +107,11 @@ void setup () {
     // Note the current time since our inactivity power down time will be based on this.
     std::time (&LastUserActivityUnixTime);
     // Start a watchdog timer to shut the unit down if we aren't able to fully initialize within 60 seconds.
-    TaskHandle_t xSetupWatchdogHandle = NULL;
-    xTaskCreate (&startup_watchdog_timer, "startup_watchdog_task", 2048, NULL, SC_TASK_PRIORITY_NORMAL, &xSetupWatchdogHandle);
-    ESP_LOGI (TAG8, "shutdown watchdog started.");
+    // DISABLED FOR TESTING: Commenting out watchdog to prevent deep sleep during UART diagnostics
+    // TaskHandle_t xSetupWatchdogHandle = NULL;
+    // xTaskCreate (&startup_watchdog_timer, "startup_watchdog_task", 2048, NULL, SC_TASK_PRIORITY_NORMAL, &xSetupWatchdogHandle);
+    // ESP_LOGI (TAG8, "shutdown watchdog started.");
+    ESP_LOGI (TAG8, "shutdown watchdog disabled for testing.");
 
     // Initialize and restore settings
     init_settings();
@@ -127,12 +133,18 @@ void setup () {
     uint32_t notification_value;
     xTaskNotifyWait (0, 0, &notification_value, portMAX_DELAY);
 
-    // Setup battery monitoring task
-    TaskHandle_t xBatteryMonitorHandle = NULL;
-    xTaskCreate (&battery_monitor_task, "battery_monitor_task", 4096, NULL, SC_TASK_PRIORITY_IDLE + 1, &xBatteryMonitorHandle);
-    ESP_LOGI (TAG8, "battery_monitor task started.");
+    // Setup battery monitoring task (only if I2C is available, i.e., not on bare XIAO)
+    if (I2C_SCL_PIN != ((gpio_num_t)-1)) {
+        TaskHandle_t xBatteryMonitorHandle = NULL;
+        xTaskCreate (&battery_monitor_task, "battery_monitor_task", 4096, NULL, SC_TASK_PRIORITY_IDLE + 1, &xBatteryMonitorHandle);
+        ESP_LOGI (TAG8, "battery_monitor task started.");
+    } else {
+        ESP_LOGI (TAG8, "battery_monitor task skipped (no I2C available).");
+    }
 
-    gpio_set_level (LED_RED, LED_OFF);
+    if (LED_RED != ((gpio_num_t)-1)) {
+        gpio_set_level (LED_RED, LED_OFF);
+    }
     ESP_LOGI (TAG8, "wifi initialized.");
 
     // mDNS is now started in the WiFi task
@@ -146,11 +158,11 @@ void setup () {
 
     // Flash the LED to indicate we are done with Wifi
     for (int i = 0; i < 3; i++) {
-        gpio_set_level (LED_BLUE, LED_OFF);
-        gpio_set_level (LED_RED, LED_ON);
+        if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
+        if (LED_RED != ((gpio_num_t)-1)) gpio_set_level (LED_RED, LED_ON);
         vTaskDelay (pdMS_TO_TICKS (100));
-        gpio_set_level (LED_BLUE, LED_ON);
-        gpio_set_level (LED_RED, LED_OFF);
+        if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_ON);
+        if (LED_RED != ((gpio_num_t)-1)) gpio_set_level (LED_RED, LED_OFF);
         vTaskDelay (pdMS_TO_TICKS (100));
     }
 
@@ -162,8 +174,9 @@ void setup () {
     gpio_set_level (LED_BLUE, LED_OFF);
 
     // Cancel the startup watchdog timer task
-    vTaskDelete (xSetupWatchdogHandle);
-    ESP_LOGI (TAG8, "setup watchdog canceled.");
+    // DISABLED FOR TESTING: Watchdog task no longer created
+    // vTaskDelete (xSetupWatchdogHandle);
+    ESP_LOGI (TAG8, "setup watchdog was disabled for testing.");
 
     // Setup quiescent LED flashing timer
     xTaskCreate (&idle_status_task, "sleep_status_task", 2048, NULL, SC_TASK_PRIORITY_IDLE, &xInactivityWatchdogHandle);

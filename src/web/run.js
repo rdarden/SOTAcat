@@ -266,6 +266,7 @@ function updatePrivilegeDisplay() {
 
     // Update button disabled states based on privilege
     updateButtonPrivileges();
+    updateRadioSpecificButtonStates();
 
     // Update band-range graph (horizontal bar showing band privileges + tick)
     updateBandRangeDisplay();
@@ -729,6 +730,7 @@ function updateButtonPrivileges() {
     const frequencyHz = AppState.vfoFrequencyHz || DEFAULT_FREQUENCY_HZ;
     const currentMode = AppState.vfoMode || "USB";
     const userLicense = getUserLicenseClass();
+    const isQmx = AppState.radioType === "QMX";
 
     // Check each mode category (3 calls — SSB/AM/FM share PHONE)
     const cwStatus = checkPrivileges(frequencyHz, "CW", userLicense);
@@ -747,7 +749,7 @@ function updateButtonPrivileges() {
     const dataOk = isPermitted(dataStatus);
 
     // Mode buttons
-    const ids = { "btn-cw": cwOk, "btn-ssb": phoneOk, "btn-am": phoneOk, "btn-fm": phoneOk, "btn-data": dataOk };
+    const ids = { "btn-cw": cwOk, "btn-ssb": phoneOk, "btn-am": phoneOk, "btn-fm": phoneOk && !isQmx, "btn-data": dataOk };
     for (const [id, ok] of Object.entries(ids)) {
         const btn = document.getElementById(id);
         if (btn) btn.disabled = !ok;
@@ -759,6 +761,21 @@ function updateButtonPrivileges() {
     document.querySelectorAll(".btn-msg").forEach((btn) => {
         btn.disabled = !txOk;
     });
+}
+
+function updateRadioSpecificButtonStates() {
+    const radioType = AppState.radioType || "Unknown";
+    const disableQmxUnsupported = radioType === "QMX";
+
+    const minPowerBtn = document.getElementById("min-power-button");
+    const maxPowerBtn = document.getElementById("max-power-button");
+    const tuneAtuBtn = document.getElementById("tune-atu-button");
+    const fmBtn = document.getElementById("btn-fm");
+
+    if (minPowerBtn) minPowerBtn.disabled = disableQmxUnsupported;
+    if (maxPowerBtn) maxPowerBtn.disabled = disableQmxUnsupported;
+    if (tuneAtuBtn) tuneAtuBtn.disabled = disableQmxUnsupported;
+    if (fmBtn) fmBtn.disabled = disableQmxUnsupported;
 }
 
 // ============================================================================
@@ -1660,6 +1677,14 @@ async function onSpotAppearing() {
 
     // Attach event listeners for all controls
     attachSpotEventListeners();
+
+    // Load radio type once the RUN page is visible so QMX-specific button state can be applied.
+    try {
+        await loadRadioType();
+    } catch (error) {
+        Log.warn("Spot")("Failed to load radio type:", error);
+    }
+    updateRadioSpecificButtonStates();
 
     // Sync xmit button state with global state
     syncXmitButtonState();

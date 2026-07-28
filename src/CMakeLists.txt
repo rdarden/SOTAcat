@@ -11,7 +11,7 @@ idf_component_register(
     INCLUDE_DIRS "../include"
     REQUIRES esp_http_server esp_timer nvs_flash esp_wifi esp_netif
              esp_driver_uart esp_driver_gpio esp_driver_i2c esp_adc
-             app_update
+             app_update mdns
     EMBED_FILES
         "web/index.htmlgz"
         "web/sclogo.jpg"

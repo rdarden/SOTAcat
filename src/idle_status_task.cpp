@@ -56,8 +56,8 @@ void idle_status_task (void * _pvParameter) {
         int blinks = std::ceil ((now - LastUserActivityUnixTime) / (AUTO_SHUTDOWN_TIME_SECONDS / 4.0));
         ESP_LOGV (TAG8, "blinks %d", blinks);
 
-        // Count USB detection as a user event
-        if (gpio_get_level (USB_DET_PIN)) {
+        // Count USB detection as a user event (only if USB_DET_PIN is available)
+        if (USB_DET_PIN != ((gpio_num_t)-1) && gpio_get_level (USB_DET_PIN)) {
             ESP_LOGV (TAG8, "USB power connected");
             blinks = 1;
         }
@@ -68,11 +68,11 @@ void idle_status_task (void * _pvParameter) {
         // operation when charging via USB, since battery stays above threshold).
         if (blinks > 4) {
             if (get_battery_percentage() < BATTERY_SHUTOFF_PERCENTAGE) {
-                gpio_set_level (LED_BLUE, LED_ON);
-                gpio_set_level (LED_RED, LED_ON);
+                if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_ON);
+                if (LED_RED != ((gpio_num_t)-1)) gpio_set_level (LED_RED, LED_ON);
                 vTaskDelay (LED_FLASH_MSEC * 15 / portTICK_PERIOD_MS);
-                gpio_set_level (LED_BLUE, LED_OFF);
-                gpio_set_level (LED_RED, LED_OFF);
+                if (LED_BLUE != ((gpio_num_t)-1)) gpio_set_level (LED_BLUE, LED_OFF);
+                if (LED_RED != ((gpio_num_t)-1)) gpio_set_level (LED_RED, LED_OFF);
 
                 // Power off, the user has been idle for the limit.
                 ESP_LOGI (TAG8, "powering off due to inactivity");
@@ -89,10 +89,14 @@ void idle_status_task (void * _pvParameter) {
         }
 
         for (int i = 1; i <= blinks; i++) {
-            gpio_set_level (LED_BLUE, CommandInProgress.load (std::memory_order_relaxed) ? LED_OFF : LED_ON);  // LED on
+            if (LED_BLUE != ((gpio_num_t)-1)) {
+                gpio_set_level (LED_BLUE, CommandInProgress.load (std::memory_order_relaxed) ? LED_OFF : LED_ON);  // LED on
+            }
             vTaskDelay (LED_FLASH_MSEC / portTICK_PERIOD_MS);
 
-            gpio_set_level (LED_BLUE, CommandInProgress.load (std::memory_order_relaxed) ? LED_ON : LED_OFF);  // LED off
+            if (LED_BLUE != ((gpio_num_t)-1)) {
+                gpio_set_level (LED_BLUE, CommandInProgress.load (std::memory_order_relaxed) ? LED_ON : LED_OFF);  // LED off
+            }
             vTaskDelay ((4 * LED_FLASH_MSEC) / portTICK_PERIOD_MS);
         }
 
@@ -121,7 +125,9 @@ void activityLedBlinkTask (void * _param) {
             continue;
         }
 
-        gpio_set_level (LED_RED, LED_OFF);
+        if (LED_RED != ((gpio_num_t)-1)) {
+            gpio_set_level (LED_RED, LED_OFF);
+        }
     }
 }
 
@@ -140,7 +146,9 @@ void showActivity () {
 
     // Reset the inactivity timer to the current time, so we can remember when the user was last active.
     std::time (&LastUserActivityUnixTime);
-    gpio_set_level (LED_RED, LED_ON);
+    if (LED_RED != ((gpio_num_t)-1)) {
+        gpio_set_level (LED_RED, LED_ON);
+    }
 
     // Signal the LED control task to reset its wait timer
     xTaskNotifyGive (showUserActivityBlinkTaskHandle);

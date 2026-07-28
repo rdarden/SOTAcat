@@ -29,7 +29,8 @@ enum class RadioType {
     UNKNOWN,
     KX2,
     KX3,
-    KH1
+    KH1,
+    QMX
 };
 
 typedef struct {
@@ -135,10 +136,10 @@ class KXRadio {
     bool sync_time (const RadioTimeHms & client_time);
     bool get_radio_state (kx_state_t * in_state);
     bool restore_radio_state (const kx_state_t * in_state, int tries);
-    bool ft8_prepare (long base_freq);
+    bool ft8_prepare (long rfFreq, int audioFreq);
     void ft8_tone_on ();
     void ft8_tone_off ();
-    void ft8_set_tone (long base_freq, long frequency);
+    void ft8_set_tone (long rfFreq, int audioFreq, long frequency);
 
     RadioType get_radio_type () const { return m_radio_type; }
 
@@ -147,6 +148,7 @@ class KXRadio {
         case RadioType::KX2: return "KX2";
         case RadioType::KX3: return "KX3";
         case RadioType::KH1: return "KH1";
+        case RadioType::QMX: return "QMX";
         default: return "Unknown";
         }
     }

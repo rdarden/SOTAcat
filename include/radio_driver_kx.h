@@ -32,8 +32,8 @@ class KXRadioDriver : public IRadioDriver {
     bool get_radio_state (KXRadio & radio, kx_state_t * state) override;
     bool restore_radio_state (KXRadio & radio, const kx_state_t * state, int tries) override;
 
-    bool ft8_prepare (KXRadio & radio, long base_freq) override;
+    bool ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) override;
     void ft8_tone_on (KXRadio & radio) override;
     void ft8_tone_off (KXRadio & radio) override;
-    void ft8_set_tone (KXRadio & radio, long base_freq, long frequency) override;
+    void ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) override;
 };
