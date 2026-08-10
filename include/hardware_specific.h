@@ -27,4 +27,9 @@ extern int         ADC_BATTERY;
 
 extern void         set_hardware_specific (void);
 extern void         init_usb_if_available (void);
+#ifdef ESP32_S3
+// Cycle the USB host port's VBUS to recover a device whose enumeration wedged
+// (e.g. a QMX left powered across an ESP32 reset).
+extern void usb_host_port_power_cycle (void);
+#endif
 extern const char * get_version_string (void);

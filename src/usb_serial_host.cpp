@@ -204,8 +204,26 @@ static void usb_cdc_open_task (void * arg) {
     dev_config.data_cb               = usb_cdc_rx_callback;
     dev_config.user_arg              = NULL;
 
+    // VBUS kick: if nothing opens for a while, cycle port power in case an
+    // attached device's USB stack is wedged and would recover from seeing a
+    // disconnect. Capped at a few attempts: it can only help devices that
+    // sense VBUS, and the known wedge case (a QMX left powered across an
+    // ESP32 reset) measurably does NOT -- its STM32 ignores VBUS and stays
+    // stuck until the radio itself is power-cycled (QMX firmware issue).
+    constexpr TickType_t VBUS_KICK_INTERVAL_TICKS = pdMS_TO_TICKS (10000);
+    constexpr int        VBUS_KICK_MAX_ATTEMPTS   = 3;
+    TickType_t           last_kick_ticks          = xTaskGetTickCount();
+    int                  kicks_remaining          = VBUS_KICK_MAX_ATTEMPTS;
+
     while (g_usb_initialized) {
         if (g_cdc_dev == NULL) {
+            if (kicks_remaining > 0 && !g_device_ever_seen &&
+                xTaskGetTickCount() - last_kick_ticks >= VBUS_KICK_INTERVAL_TICKS) {
+                usb_host_port_power_cycle();
+                last_kick_ticks = xTaskGetTickCount();
+                if (--kicks_remaining == 0)
+                    ESP_LOGW (TAG8, "No device after %d VBUS kicks; a wedged QMX needs its own power-cycle", VBUS_KICK_MAX_ATTEMPTS);
+            }
             uint8_t   iface = current_cdc_interface();
             esp_err_t ret   = cdc_acm_host_open (CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, iface, &dev_config, &g_cdc_dev);
             if (ret == ESP_OK) {

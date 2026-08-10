@@ -144,6 +144,21 @@ void set_hardware_specific (void) {
  * Initialize USB host for ESP32-S3 boards
  * Should be called after set_hardware_specific() during board initialization
  */
+#ifdef ESP32_S3
+// Cycle the USB host port's VBUS off and back on. Used as a recovery kick when
+// enumeration wedges (see usb_cdc_open_task): a device whose USB stack is stuck
+// with stale session state sees a genuine disconnect and starts fresh.
+void usb_host_port_power_cycle(void) {
+    ESP_LOGW(TAG8, "Cycling USB host port power to recover enumeration");
+    gpio_set_level((gpio_num_t)17, 0);  // LIMIT_EN: cut power at the limiter
+    gpio_set_level((gpio_num_t)12, 0);  // DEV_VBUS_EN: and its source
+    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_set_level((gpio_num_t)12, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));      // settle before gating through the limiter
+    gpio_set_level((gpio_num_t)17, 1);
+}
+#endif
+
 void init_usb_if_available(void) {
     #ifdef ESP32_S3
         // Route the shared D+/D- lines to the Type-A host connector and power it, matching
@@ -180,7 +195,13 @@ void init_usb_if_available(void) {
         gpio_set_level((gpio_num_t)17, 0);  // LIMIT_EN: start disabled
         gpio_set_direction((gpio_num_t)12, GPIO_MODE_OUTPUT);
         gpio_set_level((gpio_num_t)12, 0);  // DEV_VBUS_EN: start disabled
-        vTaskDelay(pdMS_TO_TICKS(50));
+        // Hold port power off long enough for an attached device to register a real
+        // disconnect. Across an ESP32 reset these GPIOs float and VBUS may never
+        // drop; a still-powered QMX then keeps its old USB session state and answers
+        // the new host's enumeration with stale data (CHECK_SHORT_DEV_DESC failures)
+        // until the radio is power-cycled. A self-powered device puts almost no load
+        // on VBUS, so the rail needs real time to decay below session-valid.
+        vTaskDelay(pdMS_TO_TICKS(500));
 
         gpio_set_level((gpio_num_t)12, 1);  // DEV_VBUS_EN: pass incoming VBUS through to host port
         vTaskDelay(pdMS_TO_TICKS(50));      // let VBUS settle before gating it through the limiter

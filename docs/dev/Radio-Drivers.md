@@ -242,6 +242,15 @@ Similar to KX driver; see source for implementation details.
 
 **File:** `src/radio_driver_qmx.cpp`
 
+**Known QMX-over-USB quirk (measured, 2026-08):** if the ESP32-S3 resets
+while a QMX stays powered and attached, the QMX's USB stack keeps stale
+session state and every subsequent enumeration fails
+(`CHECK_SHORT_DEV_DESC`) until the **radio itself** is power-cycled. This is
+a QMX firmware issue, not fixable host-side: the QMX does not sense VBUS
+(port power cycling is invisible to it — verified with repeated VBUS kicks)
+and repeated bus resets don't clear the stuck state. The IC-705 is
+unaffected by host resets. Worth reporting upstream to QRP Labs.
+
 The QMX requires special handling per its CAT manual. Key differences:
 
 **Mode Selection:**
