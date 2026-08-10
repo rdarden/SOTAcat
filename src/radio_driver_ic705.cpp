@@ -384,42 +384,76 @@ bool IC705RadioDriver::sync_time (KXRadio & radio, const RadioTimeHms & client_t
 }
 
 bool IC705RadioDriver::get_radio_state (KXRadio & radio, kx_state_t * state) {
-    (void) radio;
     if (!state)
         return false;
-    state->mode          = MODE_UNKNOWN;
+    // Capture what this driver can restore (mode + VFO frequency); the
+    // remaining fields are Elecraft menu concepts with no CI-V equivalent.
+    radio_mode_t mode = MODE_UNKNOWN;
+    long         hz   = 0;
+    if (!get_mode (radio, mode) || !get_frequency (radio, hz))
+        return false;
+    state->mode          = mode;
     state->active_vfo    = 0;
-    state->vfo_a_freq    = 0;
+    state->vfo_a_freq    = hz;
     state->tun_pwr       = 0;
     state->audio_peaking = 0;
     return true;
 }
 
 bool IC705RadioDriver::restore_radio_state (KXRadio & radio, const kx_state_t * state, int tries) {
-    (void) radio;
-    (void) state;
-    (void) tries;
-    return false;
+    if (!state)
+        return false;
+    bool ok = true;
+    if (state->vfo_a_freq > 0)
+        ok = set_frequency (radio, state->vfo_a_freq, tries) && ok;
+    if (state->mode != MODE_UNKNOWN)
+        ok = set_mode (radio, state->mode, tries) && ok;
+    return ok;
 }
 
+/*
+ * FT8: the IC-705 has no CAT command for audio tone generation (the QMX's TA
+ * command has no CI-V equivalent), so FSK is synthesized the way the KX driver
+ * does it -- transmit a steady carrier and step the dial frequency for each of
+ * the 79 tones. FM mode provides that carrier: PTT with no audio transmits an
+ * unmodulated carrier at exactly the displayed frequency, and bench testing
+ * confirmed the VFO retunes cleanly mid-transmit in FM. Each 160 ms tone step
+ * is a fire-and-forget CI-V set-frequency frame (no ACK wait -- the next
+ * send()'s input flush clears accumulated ACKs), keeping per-tone latency to
+ * the frame transmission time. TX power is whatever RF POWER the radio is set
+ * to; this driver does not adjust it.
+ */
 bool IC705RadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
-    (void) radio;
-    (void) rfFreq;
-    (void) audioFreq;
-    return false;  // FT8 tone path deferred
+    long base = rfFreq + audioFreq;
+    ESP_LOGI (TAG8, "IC-705 FT8 prepare: rf=%ld audio=%d -> carrier base %ld", rfFreq, audioFreq, base);
+    if (!set_mode (radio, MODE_FM, SC_KX_COMMUNICATION_RETRIES)) {
+        ESP_LOGE (TAG8, "FT8 prepare: failed to set FM mode");
+        return false;
+    }
+    if (!set_frequency (radio, base, SC_KX_COMMUNICATION_RETRIES)) {
+        ESP_LOGE (TAG8, "FT8 prepare: failed to set base frequency %ld", base);
+        return false;
+    }
+    vTaskDelay (pdMS_TO_TICKS (100));  // let the radio settle before keying
+    return true;
 }
 
 void IC705RadioDriver::ft8_tone_on (KXRadio & radio) {
-    (void) radio;
+    if (!set_xmit_state (radio, true))
+        ESP_LOGE (TAG8, "FT8 tone_on: PTT command failed");
 }
 
 void IC705RadioDriver::ft8_tone_off (KXRadio & radio) {
-    (void) radio;
+    if (!set_xmit_state (radio, false))
+        ESP_LOGE (TAG8, "FT8 tone_off: PTT release failed");
 }
 
 void IC705RadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) {
-    (void) radio;
+    // `frequency` is the absolute RF target for this tone; the FM carrier sits
+    // exactly at the dial frequency, so just retune. Fire-and-forget for timing.
     (void) rfFreq;
     (void) audioFreq;
-    (void) frequency;
+    uint8_t cmd[6] = { CIV_CMD_SET_FREQ };
+    civ::hz_to_bcd_le5 (frequency, cmd + 1);
+    civ::send (radio, cmd, sizeof (cmd));
 }

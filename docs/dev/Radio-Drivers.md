@@ -85,9 +85,20 @@ button, after which USB re-enumerates and CAT resumes automatically. (The
 `0xFE`-run wake + `0x18 0x01` ON sequence is implemented anyway; it can only
 matter in the brief window before de-enumeration.)
 
-**Deferred:** FT8 tone path, RF power get/set (`0x14 0x0A`), volume, ATU,
-message banks, time sync, and radio-state save/restore (zero-filled, QMX
-precedent).
+**FT8:** the IC-705 has no CAT command for audio tone generation (no CI-V
+equivalent of the QMX's `TA`), so FSK is synthesized KX-style: transmit a
+steady carrier and step the dial for each of the 79 tones. FM mode provides
+the carrier — PTT with no audio transmits an unmodulated carrier at exactly
+the dial frequency, and the VFO retunes cleanly mid-transmit (bench-verified:
+8/8 six-Hz steps while keyed; a full 79-tone transmission completes in the
+canonical 12.68 s with no queue timeouts). Each 160 ms tone step is a
+fire-and-forget CI-V `0x05` set-frequency frame; the next frame's input flush
+clears accumulated ACKs. TX power is whatever the radio's RF POWER is set to.
+`get_radio_state`/`restore_radio_state` capture and restore mode + VFO
+frequency so the pre-FT8 state comes back after transmission.
+
+**Deferred:** RF power get/set (`0x14 0x0A`), volume, ATU, message banks,
+and time sync.
 
 **Bench debugging tips (ESP32-S3-USB-OTG):** the default console is USB
 Serial/JTAG, which goes silent once USB host mode claims the PHY. For serial
