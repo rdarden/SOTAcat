@@ -70,6 +70,14 @@ pio run --target upload
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ENV` | `seeed_xiao_esp32c3_release` | Build environment (also available: `seeed_xiao_esp32c3_debug`, `esp32_s3_usb_otg_debug`, `esp32_s3_usb_otg_release` for the ESP32-S3-USB-OTG board with USB radios) |
+
+> **Note / TODO:** the ESP32-S3 environments currently use a single-app
+> partition table (`partitions_singleapp_large.csv`), so **OTA updates do not
+> work on the S3 board** — flashing requires the serial cable, and
+> `handler_ota.cpp` refuses the upload. The S3 has 16 MB flash, easily enough
+> for an A/B OTA layout (keep `nvs` at the same offset so settings survive the
+> one-time serial reflash); the debug build is also at ~81% of the current
+> 1.5 MB app slot, so a larger layout is needed soon regardless.
 | `IP` | `sotacat.local` | Device for OTA upload |
 | `HOST` | `sotacat.local` | Device for testing |
 
