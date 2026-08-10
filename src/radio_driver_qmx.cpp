@@ -139,15 +139,25 @@ static size_t next_qmx_ky_chunk_len (const char * pos, const char * end) {
     return KY_MAX;
 }
 
-// Poll TQ; until the radio reports receive, or timeout. Keeps the keyer-active
-// claim honest for the true keying duration.
+// Poll TQ; until the radio reports receive, or timeout. TQ drops during CW
+// inter-element/word gaps, so require several consecutive RX polls before
+// declaring the keying finished (same approach as the IC-705 driver). Keeps
+// the keyer-active claim honest for the true keying duration.
 static bool wait_for_qmx_tx_end (KXRadio & radio, TickType_t timeout_ms) {
     constexpr TickType_t POLL_INTERVAL_MS = 100;
+    constexpr int        STABLE_RX_POLLS  = 6;  // ~600ms quiet; longer than a word gap at SOTA speeds
     const TickType_t     deadline_ticks   = xTaskGetTickCount() + pdMS_TO_TICKS (timeout_ms);
+
+    int rx_streak = 0;
     while (true) {
         long tq = radio.get_from_kx ("TQ", SC_KX_COMMUNICATION_RETRIES, 1);
-        if (tq == 0)
-            return true;
+        if (tq == 0) {
+            if (++rx_streak >= STABLE_RX_POLLS)
+                return true;
+        }
+        else {
+            rx_streak = 0;
+        }
         if (xTaskGetTickCount() >= deadline_ticks)
             return false;
         vTaskDelay (pdMS_TO_TICKS (POLL_INTERVAL_MS));
