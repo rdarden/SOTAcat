@@ -122,10 +122,71 @@ bool QMXRadioDriver::tune_atu (KXRadio & radio) {
     return false;
 }
 
+// Longest chunk (up to KY_MAX) that ends at a word boundary when possible,
+// mirroring next_ky_chunk_len() in radio_driver_kx.cpp.
+static size_t next_qmx_ky_chunk_len (const char * pos, const char * end) {
+    constexpr size_t KY_MAX    = 24;  // KY text field limit (TS-480-style CAT)
+    size_t           remaining = (size_t)(end - pos);
+    if (remaining <= KY_MAX)
+        return remaining;
+    const char * space = nullptr;
+    for (size_t i = 0; i < KY_MAX; ++i) {
+        if (pos[i] == ' ')
+            space = pos + i;
+    }
+    if (space && space > pos)
+        return (size_t)(space - pos);
+    return KY_MAX;
+}
+
+// Poll TQ; until the radio reports receive, or timeout. Keeps the keyer-active
+// claim honest for the true keying duration.
+static bool wait_for_qmx_tx_end (KXRadio & radio, TickType_t timeout_ms) {
+    constexpr TickType_t POLL_INTERVAL_MS = 100;
+    const TickType_t     deadline_ticks   = xTaskGetTickCount() + pdMS_TO_TICKS (timeout_ms);
+    while (true) {
+        long tq = radio.get_from_kx ("TQ", SC_KX_COMMUNICATION_RETRIES, 1);
+        if (tq == 0)
+            return true;
+        if (xTaskGetTickCount() >= deadline_ticks)
+            return false;
+        vTaskDelay (pdMS_TO_TICKS (POLL_INTERVAL_MS));
+    }
+}
+
 bool QMXRadioDriver::send_keyer_message (KXRadio & radio, const char * message) {
     if (!message)
         return false;
-    return puts_qmx (radio, message);
+
+    // Strip prosign markers the keyer doesn't understand.
+    char   cleaned[128];
+    size_t len = 0;
+    for (const char * src = message; *src && len < sizeof (cleaned) - 1; ++src) {
+        if (*src != '<' && *src != '>')
+            cleaned[len++] = *src;
+    }
+    cleaned[len] = '\0';
+    if (len == 0)
+        return false;
+
+    // Send as `KY <text>;` commands in <=24-char chunks; the radio buffers
+    // consecutive KY commands into continuous keying.
+    const char * pos = cleaned;
+    const char * end = cleaned + len;
+    while (pos < end) {
+        size_t chunk_len = next_qmx_ky_chunk_len (pos, end);
+        if (chunk_len == 0)
+            break;
+        char command[32];  // "KY " + 24 chars + ";" + null
+        snprintf (command, sizeof (command), "KY %.*s;", (int)chunk_len, pos);
+        if (!puts_qmx (radio, command))
+            return false;
+        pos += chunk_len;
+    }
+
+    // Give keying a moment to start, then hold until the radio unkeys.
+    vTaskDelay (pdMS_TO_TICKS (200));
+    return wait_for_qmx_tx_end (radio, 60000);
 }
 
 bool QMXRadioDriver::sync_time (KXRadio & radio, const RadioTimeHms & client_time) {
