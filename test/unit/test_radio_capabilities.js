@@ -285,6 +285,32 @@ describe('getRadioBandCapabilities back-compat', () => {
     });
 });
 
+describe('IC705 capabilities', () => {
+    it('IC705 entry exists with nested shape', () => {
+        assertTrue(RADIO_CAPABILITIES.IC705, 'IC705 entry');
+        assertTrue(RADIO_CAPABILITIES.IC705.bands, 'bands record');
+        assertTrue(RADIO_CAPABILITIES.IC705.modes, 'modes record');
+    });
+
+    it('IC705 spans 160m through 70cm, all TXRX (13 bands)', () => {
+        const bands = getRadioBands('IC705', /*requireTx*/ true);
+        assertEqual(bands.length, 13);
+        for (const b of ['160m', '80m', '40m', '20m', '10m', '6m', '2m', '70cm']) {
+            assertTrue(bands.includes(b), `expected band ${b}`);
+        }
+    });
+
+    it('IC705 TX modes include CW/SSB/DATA/AM/FM', () => {
+        const modes = getRadioModes('IC705', /*requireTx*/ true);
+        assertArrayEqualUnordered(modes, ['CW', 'USB', 'LSB', 'DATA', 'AM', 'FM']);
+    });
+
+    it('IC705 can transmit FM on 2m; KX2 cannot', () => {
+        assertTrue(radioCanTransmit('IC705', '2m', 'FM'));
+        assertFalse(radioCanTransmit('KX2', '2m', 'FM'));
+    });
+});
+
 // ============================================================================
 // Summary
 // ============================================================================

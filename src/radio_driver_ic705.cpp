@@ -9,6 +9,7 @@
  */
 #include "radio_driver_ic705.h"
 #include "civ_protocol.h"
+#include "ic705_modes.h"
 #include "kx_radio.h"
 
 #include <cctype>
@@ -40,19 +41,6 @@ static constexpr uint8_t CIV_SUB_SETTINGS  = 0x05;  // 0x1A 0x05 <2-byte setting
 // IC-705 setting numbers for 0x1A 0x05 (BCD byte pairs, per the CI-V reference)
 static constexpr uint8_t CIV_SET_TIME[2]       = { 0x01, 0x66 };  // clock hh mm (local)
 static constexpr uint8_t CIV_SET_UTC_OFFSET[2] = { 0x01, 0x70 };  // hh mm + sign (01 = negative)
-
-// Icom mode codes (payload byte of commands 0x04/0x06)
-static constexpr uint8_t ICOM_MODE_LSB    = 0x00;
-static constexpr uint8_t ICOM_MODE_USB    = 0x01;
-static constexpr uint8_t ICOM_MODE_AM     = 0x02;
-static constexpr uint8_t ICOM_MODE_CW     = 0x03;
-static constexpr uint8_t ICOM_MODE_RTTY   = 0x04;
-static constexpr uint8_t ICOM_MODE_FM     = 0x05;
-static constexpr uint8_t ICOM_MODE_CW_R   = 0x07;
-static constexpr uint8_t ICOM_MODE_RTTY_R = 0x08;
-
-static constexpr uint8_t ICOM_FIL1 = 0x01;
-static constexpr uint8_t ICOM_FIL2 = 0x02;
 
 // CW send (0x17) accepts at most 30 characters per frame.
 static constexpr size_t CW_CHUNK_MAX = 30;
@@ -146,64 +134,30 @@ bool IC705RadioDriver::get_mode (KXRadio & radio, radio_mode_t & out_mode) {
     if (payload_len < 1)
         return false;
 
-    switch (payload[0]) {
-    case ICOM_MODE_LSB: out_mode = MODE_LSB; break;
-    case ICOM_MODE_USB: out_mode = MODE_USB; break;
-    case ICOM_MODE_AM: out_mode = MODE_AM; break;
-    case ICOM_MODE_CW: out_mode = MODE_CW; break;
-    case ICOM_MODE_FM: out_mode = MODE_FM; break;
-    case ICOM_MODE_CW_R: out_mode = MODE_CW_R; break;
-    case ICOM_MODE_RTTY: out_mode = MODE_DATA; break;
-    case ICOM_MODE_RTTY_R: out_mode = MODE_DATA_R; break;
-    default:
+    // The data-mode flag only matters for SSB (USB-D/LSB-D), so query it only
+    // when the base mode could carry it.
+    bool data_flag = (payload[0] == ic705::MODE_USB || payload[0] == ic705::MODE_LSB) &&
+                     get_data_mode_flag (radio);
+    if (!ic705::icom_to_radio_mode (payload[0], data_flag, out_mode)) {
         ESP_LOGW (TAG8, "unhandled Icom mode code 0x%02x", payload[0]);
         return false;
-    }
-
-    // SSB with the data flag set is USB-D/LSB-D -- report as DATA.
-    if (out_mode == MODE_USB || out_mode == MODE_LSB) {
-        if (get_data_mode_flag (radio))
-            out_mode = (out_mode == MODE_USB) ? MODE_DATA : MODE_DATA_R;
     }
     return true;
 }
 
 bool IC705RadioDriver::set_mode (KXRadio & radio, radio_mode_t mode, int tries) {
     uint8_t icom_mode;
-    uint8_t filter    = ICOM_FIL1;
-    bool    data_flag = false;
-
-    switch (mode) {
-    case MODE_LSB: icom_mode = ICOM_MODE_LSB; break;
-    case MODE_USB: icom_mode = ICOM_MODE_USB; break;
-    case MODE_AM: icom_mode = ICOM_MODE_AM; break;
-    case MODE_FM: icom_mode = ICOM_MODE_FM; break;
-    case MODE_CW:
-        icom_mode = ICOM_MODE_CW;
-        filter    = ICOM_FIL2;
-        break;
-    case MODE_CW_R:
-        icom_mode = ICOM_MODE_CW_R;
-        filter    = ICOM_FIL2;
-        break;
-    case MODE_DATA:  // FT8 and friends: USB-D
-        icom_mode = ICOM_MODE_USB;
-        data_flag = true;
-        break;
-    case MODE_DATA_R:
-        icom_mode = ICOM_MODE_LSB;
-        data_flag = true;
-        break;
-    default:
+    uint8_t filter;
+    bool    data_flag;
+    if (!ic705::radio_mode_to_icom (mode, icom_mode, filter, data_flag))
         return false;
-    }
 
     uint8_t mode_cmd[] = { CIV_CMD_SET_MODE, icom_mode, filter };
     // Always set the data flag explicitly: switching from DATA (USB-D) back to
     // plain USB must clear the "-D" on the radio, not just re-set USB.
     uint8_t data_cmd[] = { CIV_CMD_SETTINGS, CIV_SUB_DATA_MODE,
                            (uint8_t)(data_flag ? 0x01 : 0x00),
-                           (uint8_t)(data_flag ? ICOM_FIL1 : 0x00) };
+                           (uint8_t)(data_flag ? ic705::FIL1 : 0x00) };
 
     int attempts = (tries > 0) ? tries : 1;
     for (int i = 0; i < attempts; ++i) {

@@ -54,6 +54,12 @@ function assertTrue(value, msg = '') {
     }
 }
 
+function assertFalse(value, msg = '') {
+    if (value) {
+        throw new Error(`${msg}: expected falsy value, got ${value}`);
+    }
+}
+
 // ============================================================================
 // Extracted functions from run.js (for unit testing)
 // ============================================================================
@@ -570,6 +576,105 @@ describe('getKeyerFamily', () => {
         assertEqual(getKeyerFamily("UNKNOWN"), null, "UNKNOWN");
     });
 });
+
+// ============================================================================
+// Per-radio button gating + sideband rule — extracted from the REAL sources
+// (run.js / main.js / bandprivileges.js) via regex + vm, so these tests can't
+// drift from the shipped code (same technique as test_radio_capabilities.js).
+// ============================================================================
+
+{
+    const fsx = require("fs");
+    const pathx = require("path");
+    const vmx = require("vm");
+
+    const runJs = fsx.readFileSync(pathx.join(__dirname, "../../src/web/run.js"), "utf8");
+    const mainJs = fsx.readFileSync(pathx.join(__dirname, "../../src/web/main.js"), "utf8");
+    const privJs = fsx.readFileSync(pathx.join(__dirname, "../../src/web/bandprivileges.js"), "utf8");
+
+    const sandbox = { AppState: { radioType: "Unknown" }, console };
+    vmx.createContext(sandbox);
+
+    const pieces = [
+        ["BAND_PLAN", mainJs.match(/const BAND_PLAN = \{[\s\S]*?\n\};/)],
+        ["getModeCategory", privJs.match(/function getModeCategory\([\s\S]*?\n\}/)],
+        ["RADIO_UNSUPPORTED_FEATURES", runJs.match(/const RADIO_UNSUPPORTED_FEATURES = \{[\s\S]*?\n\};/)],
+        ["RADIO_MSG_BANKS", runJs.match(/const RADIO_MSG_BANKS = \{[\s\S]*?\n\};/)],
+        ["radioLacksFeature", runJs.match(/function radioLacksFeature\([\s\S]*?\n\}/)],
+        ["msgBanksUsable", runJs.match(/function msgBanksUsable\([\s\S]*?\n\}/)],
+        ["sidebandForBand", runJs.match(/function sidebandForBand\([\s\S]*?\n\}/)],
+    ];
+    for (const [name, m] of pieces) {
+        if (!m) {
+            console.error(`Could not extract ${name} from source`);
+            process.exit(1);
+        }
+        vmx.runInContext(m[0].replace(/^const /, "var "), sandbox);
+    }
+
+    const setRadio = (t) => { sandbox.AppState.radioType = t; };
+    const call = (fn, ...args) => vmx.runInContext(`${fn}(${args.map(JSON.stringify).join(",")})`, sandbox);
+
+    describe("radioLacksFeature (per-radio unsupported features)", () => {
+        it("QMX lacks power, atu, and fm", () => {
+            setRadio("QMX");
+            assertTrue(call("radioLacksFeature", "power"));
+            assertTrue(call("radioLacksFeature", "atu"));
+            assertTrue(call("radioLacksFeature", "fm"));
+        });
+        it("IC705 lacks nothing (full driver support)", () => {
+            setRadio("IC705");
+            assertFalse(call("radioLacksFeature", "power"));
+            assertFalse(call("radioLacksFeature", "atu"));
+            assertFalse(call("radioLacksFeature", "fm"));
+        });
+        it("Unlisted radios (KX2, Unknown) lack nothing", () => {
+            setRadio("KX2");
+            assertFalse(call("radioLacksFeature", "atu"));
+            setRadio("Unknown");
+            assertFalse(call("radioLacksFeature", "power"));
+        });
+    });
+
+    describe("msgBanksUsable (Msg button gating by radio + mode)", () => {
+        it("Elecraft banks work in every mode (radio resolves CW vs voice)", () => {
+            setRadio("KX2");
+            assertTrue(call("msgBanksUsable", "CW"));
+            assertTrue(call("msgBanksUsable", "USB"));
+            assertTrue(call("msgBanksUsable", "DATA"));
+        });
+        it("IC705 banks are voice-only (no CI-V trigger for CW memories)", () => {
+            setRadio("IC705");
+            assertTrue(call("msgBanksUsable", "USB"));
+            assertTrue(call("msgBanksUsable", "LSB"));
+            assertTrue(call("msgBanksUsable", "FM"));
+            assertTrue(call("msgBanksUsable", "AM"));
+            assertFalse(call("msgBanksUsable", "CW"));
+            assertFalse(call("msgBanksUsable", "DATA"));
+        });
+        it("QMX has no banks in any mode", () => {
+            setRadio("QMX");
+            assertFalse(call("msgBanksUsable", "CW"));
+            assertFalse(call("msgBanksUsable", "USB"));
+        });
+    });
+
+    describe("sidebandForBand (LSB below 10 MHz, 60m excepted)", () => {
+        it("low bands take LSB", () => {
+            assertEqual(call("sidebandForBand", "160m"), "LSB");
+            assertEqual(call("sidebandForBand", "80m"), "LSB");
+            assertEqual(call("sidebandForBand", "40m"), "LSB");
+        });
+        it("60m is USB despite being below 10 MHz (FCC channel rule)", () => {
+            assertEqual(call("sidebandForBand", "60m"), "USB");
+        });
+        it("high bands take USB", () => {
+            for (const b of ["30m", "20m", "17m", "15m", "12m", "10m", "6m", "2m", "70cm"]) {
+                assertEqual(call("sidebandForBand", b), "USB", b);
+            }
+        });
+    });
+}
 
 // ============================================================================
 // Summary

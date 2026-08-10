@@ -43,9 +43,26 @@ constexpr size_t MAX_FRAME = 48;
 // Returns the frame length, or 0 if it would not fit in cap.
 size_t build_frame (uint8_t * out, size_t cap, const uint8_t * cmd_and_data, size_t n);
 
+// Selection criteria for scan_frames()/drain_for_match(): which received
+// frame counts as the answer we're waiting for.
+struct FrameMatch {
+    uint8_t expect_cmd;  // command byte to accept (ignored when ack_nak)
+    int     expect_sub;  // required subcommand byte, or -1 for none
+    bool    ack_nak;     // true: match ACK/NAK frames instead of expect_cmd
+};
+
+// Pure frame scanner (host-unit-testable; see test/unit/test_civ_protocol.cpp).
+// Consumes every complete "FE FE ... FD" frame currently in acc[0..fill),
+// compacting the unconsumed tail to the front and updating fill. Frames not
+// addressed to CTRL_ADDR (transceive broadcasts, echoes) are discarded; of the
+// frames addressed to us, the LAST one satisfying `want` is copied to
+// frame_out (body only: <to> <from> <cmd> [data...]). If the buffer fills to
+// `cap` without a terminator, the garbage is discarded. Returns true if at
+// least one matching frame was found in this call.
+bool scan_frames (uint8_t * acc, size_t & fill, size_t cap, const FrameMatch & want, uint8_t * frame_out, size_t & frame_len_out);
+
 // Fire-and-forget: flush pending input and send one frame. Returns true if the
-// frame was built and written. Used for power-off, where the radio does not
-// reliably ACK while shutting down.
+// frame was built and written.
 bool send (KXRadio & radio, const uint8_t * cmd_and_data, size_t n);
 
 // Send a command and return the payload of the response.

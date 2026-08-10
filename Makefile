@@ -119,6 +119,18 @@ test-setup:
 	@cd test/integration && make setup
 
 test-unit:
+	@echo "Running C++ host unit tests..."
+	@set -e; TB=$$(mktemp -d); \
+	for t in \
+		"test_radio_detection src/radio_detection.cpp" \
+		"test_civ_protocol src/civ_frames.cpp" \
+		"test_ic705_modes src/ic705_modes.cpp"; do \
+		set -- $$t; \
+		echo "--- test/unit/$$1.cpp"; \
+		g++ -std=c++17 -Wall -Iinclude -o "$$TB/$$1" "test/unit/$$1.cpp" "$$2"; \
+		"$$TB/$$1"; \
+	done; \
+	rm -rf "$$TB"
 	@echo "Running JS unit tests..."
 	@set -e; for f in test/unit/test_*.js; do \
 		echo "--- $$f"; \
