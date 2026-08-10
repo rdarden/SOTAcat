@@ -145,7 +145,11 @@ hh:mm only — rounded to the nearest minute, since the clock setting carries
 no seconds). Note the radio omits the setting-number echo in `0x1A 0x05`
 responses — the payload is bare data.
 
-**Deferred:** message banks (SOTAcat's CW macros cover the use case).
+**Message banks:** the UI's M1/M2 buttons play the radio's voice TX
+memories T1/T2 via CI-V `0x28 0x00 <n>` (1-8 accepted). The radio rejects
+playback in non-voice modes and for empty memories.
+
+With this, the IC-705 driver implements the complete IRadioDriver surface.
 
 **Bench debugging tips (ESP32-S3-USB-OTG):** the default console is USB
 Serial/JTAG, which goes silent once USB host mode claims the PHY. For serial
