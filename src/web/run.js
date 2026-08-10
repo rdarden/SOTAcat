@@ -1012,10 +1012,12 @@ function selectBand(band) {
 
                 // Only set sideband if current mode is SSB (USB or LSB)
                 if (mode === "USB" || mode === "LSB") {
-                    // Set appropriate sideband for the band
-                    let targetMode = "USB"; // Default for higher bands
-                    if (band === "40m") {
-                        targetMode = "LSB"; // 40m typically uses LSB
+                    // Ham sideband convention: LSB below 10 MHz (160/80/40m),
+                    // USB above — except 60m, where USB is required (FCC rule
+                    // for the 5 MHz channels) despite being below 10 MHz.
+                    let targetMode = "USB";
+                    if (band !== "60m" && BAND_PLAN[band].min < 10000000) {
+                        targetMode = "LSB";
                     }
 
                     // Only change if different from current mode
