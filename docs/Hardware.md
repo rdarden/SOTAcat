@@ -38,8 +38,7 @@ A small WiFi module that plugs into your Elecraft KX2 or KX3 ACC (CAT) port, pro
 - Elecraft KX2 (wired ACC/CAT port)
 - Elecraft KX3 (wired ACC/CAT port)
 - Elecraft KH1 (wired ACC/CAT port)
-- QRP Labs QMX — via USB on the ESP32-S3-USB-OTG board, or via a
-  [DigiPi UART bridge](dev/QMX-DigiPi-Bridge.md) on original hardware
+- QRP Labs QMX — via USB on the ESP32-S3-USB-OTG board
 - Icom IC-705 — via USB on the ESP32-S3-USB-OTG board
 
 ## SOTAmat App (Beta)
