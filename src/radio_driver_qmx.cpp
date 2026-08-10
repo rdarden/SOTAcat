@@ -20,15 +20,6 @@ bool QMXRadioDriver::supports_volume () const {
     return true;
 }
 
-bool QMXRadioDriver::supports_power_toggle () const {
-    return false;
-}
-
-bool QMXRadioDriver::set_radio_power (KXRadio & radio, bool on) {
-    (void) radio;
-    (void) on;
-    return false;
-}
 
 bool QMXRadioDriver::get_frequency (KXRadio & radio, long & out_hz) {
     ESP_LOGD (TAG8, "QMX get_frequency");

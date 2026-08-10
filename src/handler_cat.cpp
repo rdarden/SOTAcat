@@ -119,48 +119,6 @@ esp_err_t handler_power_put (httpd_req_t * req) {
 }
 
 /**
- * Handles an HTTP PUT request to turn the radio itself on or off (not RF power).
- *
- * Only supported on radios whose CAT protocol includes a power command (IC-705).
- * Power-on blocks until the radio boots and answers CAT again, so a 204 reply
- * means "radio is up and responding" -- convenient for automated test scripts.
- *
- * IC-705 caveat (measured, 2026-08): the radio drops off the USB bus ~2.5s
- * after power-off and does not re-enumerate while off, so only the OFF
- * direction works; state=1 will fail after its boot-poll window. Power-on
- * requires the front-panel button -- after which USB re-enumerates and CAT
- * resumes automatically. Also measured: the radio stays fully dark after a
- * DC power cycle (no USB, no WLAN standby), and its RS-BA1 network server
- * does not listen while off, so no remote path (USB, WiFi, or supply
- * switching) can power this radio on.
- *
- * @param req Pointer to the HTTP request structure.  The "state" query parameter
- *            is expected to hold either "0" (power off) or any other integer
- *            (power on).
- */
-esp_err_t handler_radio_power_put (httpd_req_t * req) {
-    showActivity();
-
-    ESP_LOGV (TAG8, "trace: %s()", __func__);
-
-    if (!kxRadio.supports_power_toggle())
-        REPLY_WITH_FAILURE (req, HTTPD_404_NOT_FOUND, "power toggle not supported on this radio");
-
-    STANDARD_DECODE_SOLE_PARAMETER (req, "state", param_value);
-    ESP_LOGI (TAG8, "setting radio power to '%s'", param_value);
-
-    long state = atoi (param_value);
-
-    // Tier 3: Critical timeout; power-on holds the lock while polling for boot.
-    TIMED_LOCK_OR_FAIL (req, kxRadio.timed_lock (RADIO_LOCK_TIMEOUT_CRITICAL_MS, "radio power toggle")) {
-        if (!kxRadio.set_radio_power (state != 0))
-            REPLY_WITH_FAILURE (req, HTTPD_500_INTERNAL_SERVER_ERROR, "unable to set radio power");
-    }
-
-    REPLY_WITH_SUCCESS();
-}
-
-/**
  * Background task that actually transmits a CW keyer message. Spawned from the
  * httpd server task so the single httpd worker stays free to service status,
  * frequency, and mode polls during the prolonged on-air transmission.

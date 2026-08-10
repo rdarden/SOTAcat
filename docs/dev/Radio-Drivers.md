@@ -74,19 +74,12 @@ RTTY (`0x04`/`0x08`) is reported as DATA/DATA_R.
 and polls TX status (`0x1C 0x00`) between chunks. The `0x17` command keys the
 transmitter by itself (verified on hardware).
 
-**Radio power (`PUT /api/v1/radioPower?state=0|1`):** CI-V `0x18` powers the
-radio off/on, exposed for automated test workflows. Measured behavior (2026-08,
-battery-less on external DC, with the radio's *Power OFF Setting (for Remote
-Control)* at its default "Shutdown only"): power-**off** works, but the radio
-drops off the USB bus ~2.5 s later and does not re-enumerate while off, and it
-stays fully dark after a DC power cycle (no USB, no WLAN) — so power-**on**
-needs the front-panel button, after which USB re-enumerates and CAT resumes
-automatically. The radio's "Standby/Shutdown" option for that setting
-(`0x1A 0x05 0073`) is the documented hook for remote power-on via the radio's
-WLAN standby; SOTAcat does not use it (WLAN control is out of scope), but
-bench tooling could. (The `0xFE`-run wake + `0x18 0x01` ON sequence is
-implemented anyway; over USB it can only matter in the brief window before
-de-enumeration.)
+**Radio power:** measured (2026-08, battery-less on external DC): after a
+CI-V power-off (`0x18 0x00`) the radio drops off the USB bus ~2.5 s later and
+does not re-enumerate while off; after power-on from the front panel, USB
+re-enumerates and CAT resumes automatically without a SOTAcat reboot. (A CAT
+power-toggle endpoint was prototyped and bench-verified during development
+but is deliberately not shipped — it isn't useful in field operation.)
 
 **FT8:** the IC-705 has no CAT command for audio tone generation (no CI-V
 equivalent of the QMX's `TA`), so FSK is synthesized KX-style: transmit a

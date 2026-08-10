@@ -792,7 +792,6 @@ DELEGATE_BOOL (send_keyer_message,  (const char * message),                   me
 DELEGATE_BOOL (set_frequency,       (long hz, int tries),                     hz, tries)
 DELEGATE_BOOL (set_mode,            (radio_mode_t mode, int tries),           mode, tries)
 DELEGATE_BOOL (set_power,           (long power),                             power)
-DELEGATE_BOOL (set_radio_power,     (bool on),                                on)
 DELEGATE_BOOL (set_volume,          (long volume),                            volume)
 DELEGATE_BOOL (set_xmit_state,      (bool on),                                on)
 DELEGATE_BOOL (sync_time,           (const RadioTimeHms & client_time),       client_time)
@@ -800,7 +799,6 @@ DELEGATE_BOOL (tune_atu,            ())
 
 DELEGATE_BOOL_CONST (supports_keyer)
 DELEGATE_BOOL_CONST (supports_volume)
-DELEGATE_BOOL_CONST (supports_power_toggle)
 
 DELEGATE_VOID (ft8_set_tone, (long rfFreq, int audioFreq, long frequency), rfFreq, audioFreq, frequency)
 DELEGATE_VOID (ft8_tone_off, ())

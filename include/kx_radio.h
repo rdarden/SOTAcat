@@ -121,8 +121,6 @@ class KXRadio {
     bool tune_atu ();
     bool supports_keyer () const;
     bool supports_volume () const;
-    bool supports_power_toggle () const;
-    bool set_radio_power (bool on);
     bool send_keyer_message (const char * message);
 
     // True while an HTTP-accepted CW keyer request is outstanding (between

@@ -56,15 +56,6 @@ bool KXRadioDriver::supports_volume() const {
     return true;
 }
 
-bool KXRadioDriver::supports_power_toggle() const {
-    return false;
-}
-
-bool KXRadioDriver::set_radio_power (KXRadio & radio, bool on) {
-    (void) radio;
-    (void) on;
-    return false;
-}
 
 bool KXRadioDriver::get_frequency (KXRadio & radio, long & out_hz) {
     long frequency = radio.get_from_kx ("FA", SC_KX_COMMUNICATION_RETRIES, 11);

@@ -131,15 +131,6 @@ bool KH1RadioDriver::supports_volume() const {
     return true;
 }
 
-bool KH1RadioDriver::supports_power_toggle() const {
-    return false;
-}
-
-bool KH1RadioDriver::set_radio_power (KXRadio & radio, bool on) {
-    (void) radio;
-    (void) on;
-    return false;
-}
 
 bool KH1RadioDriver::get_frequency (KXRadio & radio, long & out_hz) {
     return get_kh1_display_frequency (radio, out_hz);

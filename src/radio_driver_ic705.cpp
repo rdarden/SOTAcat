@@ -25,8 +25,6 @@ static constexpr uint8_t CIV_CMD_GET_MODE  = 0x04;
 static constexpr uint8_t CIV_CMD_SET_FREQ  = 0x05;
 static constexpr uint8_t CIV_CMD_SET_MODE  = 0x06;
 static constexpr uint8_t CIV_CMD_CW_SEND   = 0x17;
-static constexpr uint8_t CIV_CMD_POWER     = 0x18;
-static constexpr uint8_t CIV_CMD_GET_ID    = 0x19;
 static constexpr uint8_t CIV_CMD_SETTINGS  = 0x1A;
 static constexpr uint8_t CIV_CMD_VOICE_TX  = 0x28;  // sub 0x00: play voice TX memory (0=stop, 1-8)
 static constexpr uint8_t CIV_CMD_LEVEL     = 0x14;
@@ -55,8 +53,6 @@ static constexpr uint8_t ICOM_MODE_RTTY_R = 0x08;
 
 static constexpr uint8_t ICOM_FIL1 = 0x01;
 static constexpr uint8_t ICOM_FIL2 = 0x02;
-
-static constexpr uint8_t IC705_MODEL_ID = 0xA4;  // model 164; same value as the default CI-V address
 
 // CW send (0x17) accepts at most 30 characters per frame.
 static constexpr size_t CW_CHUNK_MAX = 30;
@@ -96,10 +92,7 @@ static bool set_civ_level (KXRadio & radio, uint8_t sub, long level) {
     return civ::send_expect_ack (radio, cmd, sizeof (cmd));
 }
 
-bool IC705RadioDriver::supports_power_toggle () const {
-    return true;
-}
-
+// Read the active VFO frequency (cmd 0x03, 5-byte little-endian BCD, 1 Hz).
 bool IC705RadioDriver::get_frequency (KXRadio & radio, long & out_hz) {
     uint8_t       cmd[] = { CIV_CMD_GET_FREQ };
     uint8_t       payload[16];
@@ -114,6 +107,8 @@ bool IC705RadioDriver::get_frequency (KXRadio & radio, long & out_hz) {
     return true;
 }
 
+// Set the active VFO frequency (cmd 0x05) and verify by reading it back,
+// retrying up to `tries` times.
 bool IC705RadioDriver::set_frequency (KXRadio & radio, long hz, int tries) {
     uint8_t cmd[6] = { CIV_CMD_SET_FREQ };
     civ::hz_to_bcd_le5 (hz, cmd + 1);
@@ -264,6 +259,7 @@ bool IC705RadioDriver::set_volume (KXRadio & radio, long delta) {
     return set_civ_level (radio, CIV_SUB_AF_GAIN, target);
 }
 
+// Read the PTT/transmit status (cmd 0x1C 0x00): 1 = transmitting.
 bool IC705RadioDriver::get_xmit_state (KXRadio & radio, long & out_state) {
     uint8_t cmd[]       = { CIV_CMD_PTT, 0x00 };
     uint8_t payload[8];
@@ -276,53 +272,10 @@ bool IC705RadioDriver::get_xmit_state (KXRadio & radio, long & out_state) {
     return true;
 }
 
+// Key or unkey the transmitter (cmd 0x1C 0x00 <1|0>).
 bool IC705RadioDriver::set_xmit_state (KXRadio & radio, bool on) {
     uint8_t cmd[] = { CIV_CMD_PTT, 0x00, (uint8_t)(on ? 0x01 : 0x00) };
     return civ::send_expect_ack (radio, cmd, sizeof (cmd));
-}
-
-bool IC705RadioDriver::set_radio_power (KXRadio & radio, bool on) {
-    if (on) {
-        // Wake-up sequence: a run of 0xFE preamble bytes lets the sleeping CPU
-        // sync to the data rate before the actual power-on frame arrives.
-        // Icom specifies ~25-30 bytes at 19200 baud (more at higher rates).
-        //
-        // NOTE: over USB this can only succeed if the radio is still enumerated,
-        // and measurement shows the IC-705 drops off the USB bus ~2.5s after
-        // power-off -- so in practice ON works only via the wired CI-V jack.
-        // Kept for correctness and for the brief window before de-enumeration.
-        uint8_t wake[30];
-        memset (wake, civ::PREAMBLE, sizeof (wake));
-        radio.cat_flush_input();
-        radio.cat_write_bytes (wake, sizeof (wake));
-
-        uint8_t cmd[] = { CIV_CMD_POWER, 0x01 };
-        civ::send (radio, cmd, sizeof (cmd));
-
-        // The radio takes several seconds to boot; poll the ID probe until it
-        // answers or we give up.
-        uint8_t id_cmd[]    = { CIV_CMD_GET_ID, 0x00 };
-        uint8_t payload[8];
-        size_t  payload_len = 0;
-        for (int i = 0; i < 30; ++i) {
-            vTaskDelay (pdMS_TO_TICKS (500));
-            if (civ::transact (radio, id_cmd, sizeof (id_cmd), CIV_CMD_GET_ID, 0x00, payload, sizeof (payload), payload_len) &&
-                payload_len >= 1 && payload[payload_len - 1] == IC705_MODEL_ID) {
-                ESP_LOGI (TAG8, "IC-705 powered on and responding");
-                return true;
-            }
-        }
-        ESP_LOGE (TAG8, "IC-705 did not respond after power-on attempt");
-        return false;
-    }
-
-    // Power off: the radio does not reliably ACK while shutting down, so a
-    // successful transport write is the best confirmation available.
-    uint8_t cmd[] = { CIV_CMD_POWER, 0x00 };
-    bool    sent  = civ::send (radio, cmd, sizeof (cmd));
-    if (sent)
-        ESP_LOGI (TAG8, "IC-705 power-off command sent");
-    return sent;
 }
 
 bool IC705RadioDriver::play_message_bank (KXRadio & radio, int bank) {

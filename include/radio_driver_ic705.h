@@ -2,11 +2,32 @@
 
 #include "radio_driver.h"
 
+/**
+ * Radio driver for the Icom IC-705, speaking Icom's binary CI-V protocol over
+ * the active CAT transport (in practice, USB CDC-ACM on the ESP32-S3 USB-host
+ * board; the radio's CI-V CAT port is CDC interface 0 of its composite USB
+ * device).
+ *
+ * Unlike the ASCII Kenwood-style drivers (KX/KH1/QMX), all radio I/O goes
+ * through the civ:: framing helpers (include/civ_protocol.h), which implement
+ * the drain-and-keep-last read strategy needed to coexist with the radio's
+ * unsolicited transceive broadcasts.
+ *
+ * Capability notes (see docs/dev/Radio-Drivers.md for protocol details):
+ *  - MODE_DATA / MODE_DATA_R map to USB-D / LSB-D via the radio's separate
+ *    data-mode flag rather than distinct mode codes.
+ *  - FT8 is synthesized by stepping the dial frequency under an FM carrier
+ *    (the IC-705 has no CAT command for audio tone generation).
+ *  - ATU tune tries the native tuner protocol first (AH-705-compatible
+ *    tuners), then falls back to keying a low-power carrier for RF-sensing
+ *    tuners; refused above 6 m where no supported tuner operates.
+ *  - Message banks play the radio's voice TX memories (voice modes only;
+ *    CI-V exposes no trigger for the CW keyer memories).
+ */
 class IC705RadioDriver : public IRadioDriver {
   public:
     bool supports_keyer () const override;
     bool supports_volume () const override;
-    bool supports_power_toggle () const override;
 
     bool get_frequency (KXRadio & radio, long & out_hz) override;
     bool set_frequency (KXRadio & radio, long hz, int tries) override;
@@ -22,8 +43,6 @@ class IC705RadioDriver : public IRadioDriver {
 
     bool get_xmit_state (KXRadio & radio, long & out_state) override;
     bool set_xmit_state (KXRadio & radio, bool on) override;
-
-    bool set_radio_power (KXRadio & radio, bool on) override;
 
     bool play_message_bank (KXRadio & radio, int bank) override;
     bool tune_atu (KXRadio & radio) override;
