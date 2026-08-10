@@ -84,21 +84,7 @@ void set_hardware_specific (void) {
     LED_BLUE     = ((gpio_num_t)10);
     ADC_BATTERY  = 0;
 
-    // Check if we're running bare XIAO FIRST, before any other detection
-    #ifdef SEEED_XIAO
-        // BARE XIAO ESP32C3 uses UART0 with GPIO20/GPIO21
-        UART_NUM = UART_NUM_0;
-        UART2_TX_PIN = ((gpio_num_t)21);  // GPIO21 = D6 (TX)
-        UART2_RX_PIN = ((gpio_num_t)20);  // GPIO20 = D7 (RX)
-        HW_TYPE = SOTAcat_HW_Type::K5EM_1;  // Use K5EM_1 type to avoid inversion
-        HW_TYPE_STR = "XIAO_BARE";
-        LED_RED = ((gpio_num_t)-1);  // No red LED on bare board
-        LED_RED_SUPL = ((gpio_num_t)-1);  // No supplementary LED
-        USB_DET_PIN = ((gpio_num_t)-1);  // No USB detection pin
-        I2C_SCL_PIN = ((gpio_num_t)-1);  // No I2C on bare board
-        I2C_SDA_PIN = ((gpio_num_t)-1);  // No I2C on bare board
-        ESP_LOGI (TAG8, "Bare XIAO ESP32C3 detected");
-    #elif defined(ESP32_S3)
+    #if defined(ESP32_S3)
         // ESP32-S3 USB OTG Dev Board
         UART_NUM = UART_NUM_0;  // Use default UART0 for serial communication
         UART2_TX_PIN = ((gpio_num_t)43);  // GPIO43 (TX)
