@@ -209,7 +209,7 @@ void init_usb_if_available(void) {
 
         ESP_LOGI(TAG8, "");
         ESP_LOGI(TAG8, "╔════════════════════════════════════════════════════╗");
-        ESP_LOGI(TAG8, "║  Attempting USB Host Initialization for QMX Radio  ║");
+        ESP_LOGI(TAG8, "║  Attempting USB Host Initialization for USB Radio  ║");
         ESP_LOGI(TAG8, "╚════════════════════════════════════════════════════╝");
         
         esp_err_t ret = usb_serial_host_init();

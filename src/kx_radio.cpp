@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <driver/uart.h>
+#include <esp_task_wdt.h>
 #include <esp_timer.h>
 
 #ifdef ESP32_S3
@@ -376,6 +377,9 @@ int KXRadio::connect() {
                 g_use_usb_transport = false;
             }
         }
+        // radio_connection_task is subscribed to the task watchdog; feed it while
+        // we wait indefinitely for a radio to appear on the USB host port.
+        esp_task_wdt_reset();
         vTaskDelay (pdMS_TO_TICKS (500));
     }
 #else
@@ -406,6 +410,9 @@ int KXRadio::connect() {
 
     uint8_t buffer[256];
     while (true) {
+        // Feed the task watchdog on each scan pass; radio_connection_task waits
+        // here indefinitely when no radio is attached.
+        esp_task_wdt_reset();
         for (size_t i = 0; i < num_rates; ++i) {
             uart_set_baudrate (UART_NUM, baud_rates[i]);
             ESP_LOGI (TAG8, "Trying baud rate: %d", baud_rates[i]);
