@@ -130,6 +130,10 @@ carrier for 5 s so the tuner can match, reads the radio's SWR meter
 ≲2.5:1, and restores the operator's power and mode afterward. Tuners with a
 manual tune button need it pressed before invoking ATU tune.
 
+Tune requests above 54 MHz are refused outright: the IC-705 bypasses its
+tuner jack on 144/430 MHz and all supported tuners top out at 6 m, so
+neither the native cycle nor a fallback carrier serves any purpose there.
+
 Bench-testing note: into a dummy load, every tune "matches" instantly (SWR
 is already 1:1), which proves nothing about the tune cycle — validate tuner
 behavior against a real antenna.

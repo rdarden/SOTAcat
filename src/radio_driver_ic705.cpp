@@ -412,6 +412,19 @@ static bool carrier_tune (KXRadio & radio, IC705RadioDriver & driver) {
 }
 
 bool IC705RadioDriver::tune_atu (KXRadio & radio) {
+    // Tuners only apply on HF/6m: the IC-705 bypasses its tuner jack on
+    // 144/430 MHz, and the supported tuners (AH-705, mAT-705, T1) all top out
+    // at 54 MHz. Refusing here also keeps the carrier fallback from keying a
+    // pointless carrier on VHF/UHF.
+    constexpr long TUNER_MAX_HZ = 54000000;
+    long           hz           = 0;
+    if (!get_frequency (radio, hz))
+        return false;
+    if (hz > TUNER_MAX_HZ) {
+        ESP_LOGW (TAG8, "ATU tune refused: %ld Hz is above 6m; no tuner support on VHF/UHF", hz);
+        return false;
+    }
+
     if (civ_tuner_tune (radio))
         return true;
     ESP_LOGI (TAG8, "no native tuner result; falling back to carrier keying for RF-sensing tuners");
