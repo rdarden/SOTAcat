@@ -42,15 +42,9 @@ const ATU_FEEDBACK_DURATION_MS = 1000;
 // Message/Audio Playback Functions
 // ============================================================================
 
-// Msg N button press: play the radio's message bank N, or — on radios whose
-// banks can't play CW/DATA content — send SOTAcat CW macro N instead.
+// Play pre-recorded message from specified radio memory bank slot
 function playMsg(slot) {
-    const behavior = msgSlotBehavior(AppState.vfoMode || "USB");
-    if (behavior === "macros") {
-        onCwMacroButtonPress(slot - 1);
-        return;
-    }
-    if (behavior !== "banks") return;
+    if (!msgBanksUsable(AppState.vfoMode || "USB")) return;
     const url = `/api/v1/msg?bank=${slot}`;
     fetchQuiet(url, { method: "PUT" }, "Spot");
 }
@@ -762,19 +756,12 @@ function updateButtonPrivileges() {
     }
 
     // Msg buttons: disabled if the current mode is not transmittable, or if
-    // this radio+mode combination has nothing to play (see msgSlotBehavior) —
-    // in macro mode, each slot needs a corresponding CW macro to be defined.
+    // this radio can't play its banks in this mode (see msgBanksUsable).
     const cat = getModeCategory(currentMode);
     const txOk = cat === "CW" ? cwOk : cat === "DATA" ? dataOk : phoneOk;
-    const behavior = msgSlotBehavior(currentMode);
-    const macros = AppState.cwMacros || [];
+    const usable = msgBanksUsable(currentMode);
     document.querySelectorAll(".btn-msg").forEach((btn) => {
-        const slot = parseInt(btn.getAttribute("data-msg-slot"), 10) || 0;
-        const usable = behavior === "banks" || (behavior === "macros" && slot >= 1 && slot <= macros.length);
         btn.disabled = !txOk || !usable;
-        btn.title = behavior === "macros" && slot >= 1 && slot <= macros.length
-            ? `CW macro: ${macros[slot - 1].label}`
-            : "";
     });
 }
 
@@ -795,17 +782,16 @@ const RADIO_MSG_BANKS = {
     "IC705": "voice",
 };
 
-// Behavior of the Msg N buttons for the current mode:
-// "banks"  → play the radio's message bank N
-// "macros" → send SOTAcat CW/DATA macro N through the keyer
-// null     → nothing meaningful; buttons disabled
-function msgSlotBehavior(currentMode) {
+// True when the Msg N buttons can do something meaningful in the current
+// mode: play the radio's message bank N. On radios whose banks are
+// voice-only (IC-705 — CI-V has no CW keyer-memory trigger), the buttons
+// are simply disabled outside the voice modes.
+function msgBanksUsable(currentMode) {
     const support = RADIO_MSG_BANKS[AppState.radioType] || "all";
+    if (support === "none") return false;
+    if (support === "all") return true;
     const cat = getModeCategory(currentMode);
-    if (cat === "CW" || cat === "DATA") {
-        return support === "all" ? "banks" : "macros";
-    }
-    return support === "none" ? null : "banks";
+    return cat !== "CW" && cat !== "DATA";
 }
 
 function radioLacksFeature(feature) {
@@ -1735,8 +1721,7 @@ async function onSpotAppearing() {
     }
     updateRadioSpecificButtonStates();
 
-    // Msg button enablement depends on radio type + loaded macros (see
-    // msgSlotBehavior), both of which are only known at this point.
+    // Msg button enablement depends on the radio type, only known at this point.
     updateButtonPrivileges();
 
     // Sync xmit button state with global state
