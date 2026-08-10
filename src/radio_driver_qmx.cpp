@@ -125,24 +125,6 @@ bool QMXRadioDriver::tune_atu (KXRadio & radio) {
  *  - Prosigns are sent as mapped single characters ([ = BT, _ = AR, etc.).
  */
 
-// SOTAcat macros write prosigns as <XX>; translate the ones the QMX keyer
-// supports to its single-character encodings, and strip any others (matching
-// the KX driver's strip-only behavior for unknowns).
-static char qmx_prosign_char (const char * tag) {
-    static const struct {
-        const char * tag;
-        char         ch;
-    } map[] = {
-        { "<AR>", '_' }, { "<BT>", '[' }, { "<AS>", '<' }, { "<SK>", '>' },
-        { "<KN>", '=' }, { "<BK>", '\\' }, { "<HH>", '#' }, { "<SN>", '%' },
-    };
-    for (const auto & m : map) {
-        if (strncmp (tag, m.tag, 4) == 0)
-            return m.ch;
-    }
-    return '\0';
-}
-
 // Longest chunk (up to `cap`) that ends at a word boundary when possible,
 // mirroring next_ky_chunk_len() in radio_driver_kx.cpp.
 static size_t next_qmx_ky_chunk_len (const char * pos, const char * end, size_t cap) {
@@ -193,21 +175,16 @@ bool QMXRadioDriver::send_keyer_message (KXRadio & radio, const char * message) 
     if (!message)
         return false;
 
-    // Translate <XX> prosigns to the QMX keyer's single-character encodings;
-    // strip unrecognized angle-bracket markup.
+    // Strip prosign markers, keeping their letters (so <AR> keys as "AR").
+    // The CAT manual's prosign character map ([ = BT, _ = AR, ...) applies
+    // only to TS480-compatibility mode; measured in native mode, those
+    // characters key invalid garbage rather than prosigns, so no translation
+    // is attempted (matches the KX driver's behavior).
     char   cleaned[128];
     size_t len = 0;
-    for (const char * src = message; *src && len < sizeof (cleaned) - 1;) {
-        if (*src == '<' && src[1] && src[2] && src[3] == '>') {
-            char ps = qmx_prosign_char (src);
-            if (ps)
-                cleaned[len++] = ps;
-            src += 4;
-            continue;
-        }
+    for (const char * src = message; *src && len < sizeof (cleaned) - 1; ++src) {
         if (*src != '<' && *src != '>')
             cleaned[len++] = *src;
-        ++src;
     }
     cleaned[len] = '\0';
     if (len == 0)
