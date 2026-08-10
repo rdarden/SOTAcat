@@ -252,8 +252,8 @@ bool IC705RadioDriver::get_volume (KXRadio & radio, long & out_volume) {
     return get_civ_level (radio, CIV_CMD_LEVEL, CIV_SUB_AF_GAIN, out_volume);
 }
 
-// One UI click per ~2.5% of the 0-255 AF range (the handler passes +/-1).
-static constexpr long IC705_VOLUME_STEP_UNITS = 6;
+// One UI click per ~0.8% of the 0-255 AF range (the handler passes +/-1).
+static constexpr long IC705_VOLUME_STEP_UNITS = 2;
 
 bool IC705RadioDriver::set_volume (KXRadio & radio, long delta) {
     long current = 0;
