@@ -113,27 +113,61 @@ bool QMXRadioDriver::tune_atu (KXRadio & radio) {
     return false;
 }
 
-// Longest chunk (up to KY_MAX) that ends at a word boundary when possible,
+/*
+ * QMX keyer, per the QMX CAT programming manual (KY command, native mode --
+ * i.e. TS480 compatibility OFF):
+ *  - `KY <text>;` takes free-form text into an 80-character circular transmit
+ *    buffer; further KY commands append while keying is in progress, so a
+ *    typical SOTA exchange fits in a single command with no pacing gaps.
+ *  - `KY;` (get) reports the buffer state: 0 = sending, buffer <= 75% full;
+ *    1 = sending, > 75% full; 2 = idle/empty. KY0 guarantees at least 20
+ *    characters free, which paces follow-on chunks of oversized messages.
+ *  - Prosigns are sent as mapped single characters ([ = BT, _ = AR, etc.).
+ */
+
+// SOTAcat macros write prosigns as <XX>; translate the ones the QMX keyer
+// supports to its single-character encodings, and strip any others (matching
+// the KX driver's strip-only behavior for unknowns).
+static char qmx_prosign_char (const char * tag) {
+    static const struct {
+        const char * tag;
+        char         ch;
+    } map[] = {
+        { "<AR>", '_' }, { "<BT>", '[' }, { "<AS>", '<' }, { "<SK>", '>' },
+        { "<KN>", '=' }, { "<BK>", '\\' }, { "<HH>", '#' }, { "<SN>", '%' },
+    };
+    for (const auto & m : map) {
+        if (strncmp (tag, m.tag, 4) == 0)
+            return m.ch;
+    }
+    return '\0';
+}
+
+// Longest chunk (up to `cap`) that ends at a word boundary when possible,
 // mirroring next_ky_chunk_len() in radio_driver_kx.cpp.
-static size_t next_qmx_ky_chunk_len (const char * pos, const char * end) {
-    constexpr size_t KY_MAX    = 24;  // KY text field limit (TS-480-style CAT)
-    size_t           remaining = (size_t)(end - pos);
-    if (remaining <= KY_MAX)
+static size_t next_qmx_ky_chunk_len (const char * pos, const char * end, size_t cap) {
+    size_t remaining = (size_t)(end - pos);
+    if (remaining <= cap)
         return remaining;
     const char * space = nullptr;
-    for (size_t i = 0; i < KY_MAX; ++i) {
+    for (size_t i = 0; i < cap; ++i) {
         if (pos[i] == ' ')
             space = pos + i;
     }
     if (space && space > pos)
         return (size_t)(space - pos);
-    return KY_MAX;
+    return cap;
 }
 
-// Poll TQ; until the radio reports receive, or timeout. TQ drops during CW
-// inter-element/word gaps, so require several consecutive RX polls before
-// declaring the keying finished (same approach as the IC-705 driver). Keeps
-// the keyer-active claim honest for the true keying duration.
+// Read the KY transmit-buffer state: 0 = sending & <= 75% full, 1 = > 75%
+// full, 2 = idle/empty; -1 if this firmware doesn't answer KY-get.
+static long qmx_ky_state (KXRadio & radio) {
+    return radio.get_from_kx ("KY", 1, 1);
+}
+
+// Fallback completion check for firmware without KY-get: poll TQ; with a
+// stable-RX window, since TQ drops during CW inter-element and word gaps
+// (same approach as the IC-705 driver).
 static bool wait_for_qmx_tx_end (KXRadio & radio, TickType_t timeout_ms) {
     constexpr TickType_t POLL_INTERVAL_MS = 100;
     constexpr int        STABLE_RX_POLLS  = 6;  // ~600ms quiet; longer than a word gap at SOTA speeds
@@ -159,35 +193,80 @@ bool QMXRadioDriver::send_keyer_message (KXRadio & radio, const char * message) 
     if (!message)
         return false;
 
-    // Strip prosign markers the keyer doesn't understand.
+    // Translate <XX> prosigns to the QMX keyer's single-character encodings;
+    // strip unrecognized angle-bracket markup.
     char   cleaned[128];
     size_t len = 0;
-    for (const char * src = message; *src && len < sizeof (cleaned) - 1; ++src) {
+    for (const char * src = message; *src && len < sizeof (cleaned) - 1;) {
+        if (*src == '<' && src[1] && src[2] && src[3] == '>') {
+            char ps = qmx_prosign_char (src);
+            if (ps)
+                cleaned[len++] = ps;
+            src += 4;
+            continue;
+        }
         if (*src != '<' && *src != '>')
             cleaned[len++] = *src;
+        ++src;
     }
     cleaned[len] = '\0';
     if (len == 0)
         return false;
 
-    // Send as `KY <text>;` commands in <=24-char chunks; the radio buffers
-    // consecutive KY commands into continuous keying.
-    const char * pos = cleaned;
-    const char * end = cleaned + len;
+    // First command carries up to 60 characters (comfortable margin in the
+    // 80-char buffer), so a typical message goes out in one KY with zero
+    // inter-chunk gaps. Oversized messages continue in <=20-char chunks,
+    // sent only while the buffer reports <=75% full (KY0 => >=20 chars free).
+    constexpr size_t FIRST_CHUNK_MAX = 60;
+    constexpr size_t NEXT_CHUNK_MAX  = 20;
+
+    const char * pos   = cleaned;
+    const char * end   = cleaned + len;
+    bool         first = true;
     while (pos < end) {
-        size_t chunk_len = next_qmx_ky_chunk_len (pos, end);
+        if (!first) {
+            // Pace follow-on chunks: KY0/KY2 mean >= 20 characters free; KY1
+            // means wait. If KY-get isn't supported (-1), fall back to
+            // waiting for the whole buffer to key out before appending.
+            long       state    = qmx_ky_state (radio);
+            TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS (30000);
+            while (state == 1 && xTaskGetTickCount() < deadline) {
+                vTaskDelay (pdMS_TO_TICKS (100));
+                state = qmx_ky_state (radio);
+            }
+            if (state < 0)
+                wait_for_qmx_tx_end (radio, 60000);
+        }
+        size_t chunk_len = next_qmx_ky_chunk_len (pos, end, first ? FIRST_CHUNK_MAX : NEXT_CHUNK_MAX);
         if (chunk_len == 0)
             break;
-        char command[32];  // "KY " + 24 chars + ";" + null
+        char command[72];  // "KY " + 60 chars + ";" + null
         snprintf (command, sizeof (command), "KY %.*s;", (int)chunk_len, pos);
         if (!puts_qmx (radio, command))
             return false;
         pos += chunk_len;
+        first = false;
     }
 
-    // Give keying a moment to start, then hold until the radio unkeys.
+    // Completion: wait for the transmit text buffer to drain (KY2), then let
+    // the trailing element finish keying (short TQ wait). Falls back to TQ
+    // polling alone if this firmware doesn't answer KY-get.
     vTaskDelay (pdMS_TO_TICKS (200));
-    return wait_for_qmx_tx_end (radio, 60000);
+    long state = qmx_ky_state (radio);
+    if (state < 0)
+        return wait_for_qmx_tx_end (radio, 60000);
+
+    TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS (60000);
+    while (state != 2 && xTaskGetTickCount() < deadline) {
+        vTaskDelay (pdMS_TO_TICKS (100));
+        long s = qmx_ky_state (radio);
+        if (s >= 0)
+            state = s;  // ignore transient read failures
+    }
+    if (state != 2)
+        return false;
+    wait_for_qmx_tx_end (radio, 3000);  // trailing element; best-effort
+    return true;
 }
 
 bool QMXRadioDriver::sync_time (KXRadio & radio, const RadioTimeHms & client_time) {
