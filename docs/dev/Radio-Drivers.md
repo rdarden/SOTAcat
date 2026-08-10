@@ -185,6 +185,39 @@ ft8_tone_off() called — stop transmit and clean up
 cleanup_ft8_task() — restore radio state
 ```
 
+### Radio state save/restore
+
+FT8 is the **only** client of `get_radio_state()` / `restore_radio_state()`
+(the `kx_state_t` snapshot in `include/kx_radio.h`) — nothing else in SOTAcat
+captures or restores radio state. The lifecycle:
+
+1. **Capture**: `prepareft8` snapshots the radio via `get_radio_state()`
+   before anything is touched.
+2. **Mutate**: `ft8_prepare()` retunes and switches mode (USB on Elecraft,
+   FM on IC-705); the KX driver additionally forces TUN PWR to 10 W.
+3. **Restore** via `restore_radio_state()` in three places: immediately if
+   prepare fails partway; in `cleanup_ft8_task()` after the transmission
+   sequence ends; and on `cancelft8`.
+
+Each driver snapshots what *its own* FT8 path perturbs — the depth
+differences are deliberate, not gaps:
+
+| Field | KX2/KX3 | KH1 | IC-705 | QMX |
+|---|---|---|---|---|
+| Mode | ✅ | — | ✅ | zeroed |
+| VFO A frequency | ✅ | ✅ | ✅ | zeroed |
+| Active VFO | ✅ | — | — | zeroed |
+| TUN PWR (menu 58) | ✅ | — | n/a | zeroed |
+| Audio peaking (APF) | ✅ | — | n/a | zeroed |
+
+The KX needs the extra fields because its FT8 commandeers the TUN PWR menu
+setting and mode-jumping can disturb a CW operator's APF; the IC-705's FT8
+touches only mode and frequency (power is left at the operator's setting by
+policy, and CI-V has no TUN-PWR/APF analogues), so its leaner snapshot is
+complete for everything its FT8 changes. The QMX driver zero-fills the
+snapshot and returns `false` from restore — after FT8 the QMX stays in DIGI
+mode at the FT8 frequency.
+
 ### Per-Radio Details
 
 #### KX2/KX3 Radio Driver
