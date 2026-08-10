@@ -62,6 +62,20 @@ static esp_err_t         g_last_open_err        = ESP_OK; // last non-OK cdc_acm
 static TaskHandle_t      g_usb_host_task_handle = NULL;
 static TaskHandle_t      g_usb_open_task_handle = NULL;
 
+// Which CDC interface of a multi-port device to open. The IC-705 exposes two
+// ACM ports (control interfaces 0 and 2); interface 0 is the CI-V/CAT port on
+// the unit examined, but firmware revisions could differ, so a failed CAT
+// probe can rotate to the other port via usb_serial_host_cycle_interface().
+// Single-port devices (QMX) always use interface 0.
+static const uint8_t s_icom_iface_candidates[] = {0, 2};
+static size_t        s_iface_rotor             = 0;
+
+static uint8_t current_cdc_interface (void) {
+    if (g_cdc_vid == USB_VID_ICOM)
+        return s_icom_iface_candidates[s_iface_rotor % (sizeof (s_icom_iface_candidates))];
+    return 0;
+}
+
 /**
  * Called by the CDC-ACM driver whenever data arrives from the device.
  * Runs in the driver's own task context, so we just copy into our RX queue
@@ -86,6 +100,7 @@ static void usb_cdc_event_callback (const cdc_acm_host_dev_event_data_t * event,
     case CDC_ACM_HOST_DEVICE_DISCONNECTED:
         ESP_LOGW (TAG8, "USB CDC device disconnected (VID=0x%04X PID=0x%04X)", g_cdc_vid, g_cdc_pid);
         g_usb_connected = false;
+        s_iface_rotor   = 0;  // next device starts back at the first candidate interface
         gpio_set_level (USB_DEVICE_OPEN_LED_GPIO, 0);
         usb_host_display_set_line (2, "NO DEVICE", DISPLAY_COLOR_GRAY);
         usb_host_display_set_line (3, "", DISPLAY_COLOR_WHITE);
@@ -191,7 +206,8 @@ static void usb_cdc_open_task (void * arg) {
 
     while (g_usb_initialized) {
         if (g_cdc_dev == NULL) {
-            esp_err_t ret = cdc_acm_host_open (CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, 0, &dev_config, &g_cdc_dev);
+            uint8_t   iface = current_cdc_interface();
+            esp_err_t ret   = cdc_acm_host_open (CDC_HOST_ANY_VID, CDC_HOST_ANY_PID, iface, &dev_config, &g_cdc_dev);
             if (ret == ESP_OK) {
                 // Many CDC-ACM device firmwares (STM32's USB VCP stack very much included)
                 // gate actual UART activity on DTR being asserted, mirroring real RS-232
@@ -202,8 +218,22 @@ static void usb_cdc_open_task (void * arg) {
                 if (line_ret != ESP_OK)
                     ESP_LOGW (TAG8, "set_control_line_state() failed: %s (device may not respond)", esp_err_to_name (line_ret));
 
+                // The IC-705's CI-V-over-USB port is a virtual UART, but set a sane
+                // line coding anyway (matches its nominal CI-V rate). Left alone for
+                // other vendors: the QMX/STM32 VCP path works without it today.
+                if (g_cdc_vid == USB_VID_ICOM) {
+                    cdc_acm_line_coding_t coding = {};
+                    coding.dwDTERate   = 19200;
+                    coding.bCharFormat = 0;  // 1 stop bit
+                    coding.bParityType = 0;  // no parity
+                    coding.bDataBits   = 8;
+                    esp_err_t coding_ret = cdc_acm_host_line_coding_set (g_cdc_dev, &coding);
+                    if (coding_ret != ESP_OK)
+                        ESP_LOGW (TAG8, "line_coding_set() failed: %s", esp_err_to_name (coding_ret));
+                }
+
                 // g_cdc_vid/g_cdc_pid were captured by usb_new_device_callback() for this device.
-                ESP_LOGI (TAG8, "USB CDC-ACM device opened (VID=0x%04X PID=0x%04X); ready for CAT commands", g_cdc_vid, g_cdc_pid);
+                ESP_LOGI (TAG8, "USB CDC-ACM device opened (VID=0x%04X PID=0x%04X interface %u); ready for CAT commands", g_cdc_vid, g_cdc_pid, iface);
                 g_usb_connected = true;
                 gpio_set_level (USB_DEVICE_OPEN_LED_GPIO, 1);  // Green: device open
 
@@ -282,13 +312,41 @@ esp_err_t usb_serial_host_init (void) {
             return ESP_ERR_NO_MEM;
         }
 
-        ESP_LOGI (TAG8, "USB host initialized; watching host port for a QMX CDC-ACM device");
+        ESP_LOGI (TAG8, "USB host initialized; watching host port for a CDC-ACM radio (QMX, IC-705)");
         return ESP_OK;
     #endif
 }
 
 bool usb_serial_host_is_connected (void) {
     return g_usb_connected;
+}
+
+uint16_t usb_serial_host_get_vid (void) {
+    #ifdef ESP32_S3
+        return g_cdc_vid;
+    #else
+        return 0;
+    #endif
+}
+
+uint16_t usb_serial_host_get_pid (void) {
+    #ifdef ESP32_S3
+        return g_cdc_pid;
+    #else
+        return 0;
+    #endif
+}
+
+void usb_serial_host_cycle_interface (void) {
+    #ifdef ESP32_S3
+        ESP_LOGI (TAG8, "Cycling to next CDC interface candidate");
+        g_usb_connected = false;
+        if (g_cdc_dev != NULL) {
+            cdc_acm_host_close (g_cdc_dev);
+            g_cdc_dev = NULL;
+        }
+        s_iface_rotor++;  // usb_cdc_open_task will re-open on the new candidate
+    #endif
 }
 
 int usb_serial_host_write (const uint8_t * data, size_t len) {

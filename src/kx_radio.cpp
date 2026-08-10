@@ -1,5 +1,8 @@
 #include "kx_radio.h"
+#include "civ_protocol.h"
+#include "globals.h"
 #include "hardware_specific.h"
+#include "radio_driver_ic705.h"
 #include "radio_driver_kh1.h"
 #include "radio_driver_kx.h"
 #include "radio_driver_qmx.h"
@@ -34,22 +37,16 @@ static const char * TAG8 = "sc:kx_radio";
 // Global static instance
 KXRadio & kxRadio = KXRadio::getInstance();
 
-static KXRadioDriver  g_kx_driver;
-static KH1RadioDriver g_kh1_driver;
-static QMXRadioDriver g_qmx_driver;
+static KXRadioDriver    g_kx_driver;
+static KH1RadioDriver   g_kh1_driver;
+static QMXRadioDriver   g_qmx_driver;
+static IC705RadioDriver g_ic705_driver;
 
 // UART timeouts for radio commands
 // Short commands (status checks): 100ms is sufficient
 // Long commands (frequency changes): Radio needs time to settle VFO, use 2000ms
 #define KX_TIMEOUT_MS_SHORT_COMMANDS 100
 #define KX_TIMEOUT_MS_LONG_COMMANDS  2000
-
-#ifdef ESP32_S3
-    // How long to wait, at connect() time, for a QMX's USB CDC-ACM pipe to already be
-    // open before falling back to scanning the wired ACC UART. USB CDC has no baud rate
-    // to negotiate, so once open it's used as-is.
-    #define USB_CONNECT_WAIT_MS 3000
-#endif
 
 /*
  * Utilities
@@ -88,6 +85,27 @@ static int cat_read (uint8_t * buf, int max_len, int wait_ms) {
         return usb_serial_host_read_blocking (buf, (size_t)max_len, wait_ms);
 #endif
     return uart_read_bytes (UART_NUM, buf, max_len, pdMS_TO_TICKS (wait_ms));
+}
+
+// Public byte-oriented transport access, for binary protocols (Icom CI-V) that
+// can't go through the ASCII command primitives.
+void KXRadio::cat_flush_input () {
+    if (!is_locked())
+        ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
+    cat_flush();
+}
+
+int KXRadio::cat_write_bytes (const uint8_t * data, int len) {
+    if (!is_locked())
+        ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
+    cat_write ((const char *)data, len);
+    return len;
+}
+
+int KXRadio::cat_read_bytes (uint8_t * buf, int max_len, int wait_ms) {
+    if (!is_locked())
+        ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
+    return cat_read (buf, max_len, wait_ms);
 }
 
 /**
@@ -166,6 +184,29 @@ static long parse_response (const char * response, int num_digits) {
     return -1;  // Invalid response size
 }
 
+#ifdef ESP32_S3
+// True if an Icom IC-705 answers the CI-V ID request (0x19 0x00) on the active
+// transport. The reply payload ends in the model ID 0xA4 (164) -- confirmed to
+// be the model code, not an echo of the CI-V address, by probing with a
+// non-default address in the reference Python implementation.
+static bool probe_for_ic705 () {
+    ESP_LOGD (TAG8, "Entering probe_for_ic705()");
+
+    uint8_t cmd[]       = { 0x19, 0x00 };
+    uint8_t payload[8];
+    size_t  payload_len = 0;
+    if (!civ::transact (kxRadio, cmd, sizeof (cmd), 0x19, 0x00, payload, sizeof (payload), payload_len, 400)) {
+        ESP_LOGV (TAG8, "IC-705 probe: no CI-V response");
+        return false;
+    }
+    if (payload_len < 1 || payload[payload_len - 1] != 0xA4) {
+        ESP_LOGI (TAG8, "CI-V ID response with unexpected model id (payload %u bytes)", (unsigned)payload_len);
+        return false;
+    }
+    return true;
+}
+#endif
+
 static bool probe_for_qmx () {
     char qmx_response[64] = {0};
 
@@ -214,6 +255,8 @@ void KXRadio::select_driver() {
         m_driver = &g_kh1_driver;
     else if (m_radio_type == RadioType::QMX)
         m_driver = &g_qmx_driver;
+    else if (m_radio_type == RadioType::IC705)
+        m_driver = &g_ic705_driver;
     else
         m_driver = &g_kx_driver;
 }
@@ -233,6 +276,42 @@ void KXRadio::select_driver() {
  * Preconditions:
  *   The radio must be locked before calling this function. If not, an error is logged.
  */
+#ifdef ESP32_S3
+// Periodically shows the current VFO frequency on the onboard LCD (row 6), so CAT
+// traffic can be visually confirmed as ongoing/working without WiFi or a console --
+// both of which may be unavailable once USB host mode claims the chip's USB PHY.
+static void radio_status_display_task (void * arg) {
+    while (true) {
+        vTaskDelay (pdMS_TO_TICKS (1000));
+
+        if (!kxRadio.is_connected())
+            continue;
+
+        long hz        = 0;
+        bool got_freq  = false;
+        {
+            TimedLock lock = kxRadio.timed_lock (RADIO_LOCK_TIMEOUT_FAST_MS, "status display FA");
+            if (lock.acquired())
+                got_freq = kxRadio.get_frequency (hz);
+        }
+
+        if (got_freq) {
+            char line[24];
+            snprintf (line, sizeof (line), "%ld.%03ld kHz", hz / 1000, hz % 1000);
+            usb_host_display_set_line (6, line, DISPLAY_COLOR_WHITE);
+        }
+    }
+}
+
+static void start_radio_status_display_task_once () {
+    static bool started = false;
+    if (started)
+        return;
+    started = true;
+    xTaskCreate (radio_status_display_task, "radio_status_disp", 3072, NULL, SC_TASK_PRIORITY_LOW, NULL);
+}
+#endif
+
 int KXRadio::connect() {
     ESP_LOGV (TAG8, "trace: %s()", __func__);
 
@@ -240,11 +319,18 @@ int KXRadio::connect() {
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
 #ifdef ESP32_S3
-    // Give a USB-connected QMX a window to finish CDC-ACM enumeration (see
-    // usb_serial_host.h/init_usb_if_available()) before falling back to scanning the
-    // wired ACC UART below. Unlike the wired port, USB CDC has no baud rate to negotiate,
-    // so once usb_serial_host_is_connected() is true its data pipe is already usable.
-    for (int waited_ms = 0; waited_ms < USB_CONNECT_WAIT_MS; waited_ms += 250) {
+    start_radio_status_display_task_once();
+
+    // This dev board's wired ACC UART (UART_NUM_0, GPIO43/44) is the same peripheral and pins
+    // as its onboard debug-UART bridge, and this USB-host configuration has no wired radio
+    // connection anyway -- scanning it here would garble that console forever (confirmed: it
+    // was masking a real panic's backtrace behind a wall of baud-mismatched noise). Unlike
+    // other hardware, just keep waiting for a QMX to show up over USB; never fall back to UART.
+    while (true) {
+        // Re-checked on every lap (not just once at startup) so a QMX that attaches over
+        // USB later -- e.g. after a runtime reset while it was already plugged in and
+        // powered, which this board's USB host doesn't reliably re-enumerate -- still gets
+        // picked up once it's freshly power-cycled, without requiring a full SOTAcat reboot.
         if (usb_serial_host_is_connected()) {
             g_use_usb_transport = true;
             ESP_LOGI (TAG8, "USB CDC device open; using USB transport for CAT communication");
@@ -252,7 +338,30 @@ int KXRadio::connect() {
             // actually start servicing its virtual UART before we probe it.
             vTaskDelay (pdMS_TO_TICKS (1500));
             empty_kx_input_buffer (100);
-            if (probe_for_qmx()) {
+
+            // The enumerated VID picks the probe: Icom devices speak binary CI-V
+            // and would only be confused by an ASCII "VN;", and vice versa.
+            if (usb_serial_host_get_vid() == USB_VID_ICOM) {
+                if (probe_for_ic705()) {
+                    ESP_LOGI (TAG8, "IC-705 radio detected over USB CDC");
+                    usb_host_display_set_line (5, "CAT: OK (IC705)", DISPLAY_COLOR_GREEN);
+                    m_radio_type   = RadioType::IC705;
+                    m_is_connected = true;
+                    select_driver();
+                    empty_kx_input_buffer (100);
+                    return 0;  // no baud rate to report for USB
+                }
+                // Probably opened the radio's GPS/RS-232C port instead of CI-V;
+                // rotate to the other CDC interface and re-probe next lap.
+                // (Note: a powered-off IC-705 never enumerates at all, so there
+                // is no auto-power-on opportunity here -- the radio must be on
+                // for USB to come up the first time.)
+                ESP_LOGW (TAG8, "Icom device open but no CI-V response; trying next CDC interface");
+                usb_host_display_set_line (5, "CAT: no resp", DISPLAY_COLOR_RED);
+                g_use_usb_transport = false;
+                usb_serial_host_cycle_interface();
+            }
+            else if (probe_for_qmx()) {
                 ESP_LOGI (TAG8, "QMX radio detected over USB CDC");
                 usb_host_display_set_line (5, "CAT: OK (QMX)", DISPLAY_COLOR_GREEN);
                 m_radio_type   = RadioType::QMX;
@@ -261,15 +370,15 @@ int KXRadio::connect() {
                 empty_kx_input_buffer (100);
                 return 0;  // no baud rate to report for USB
             }
-            ESP_LOGW (TAG8, "USB CDC device open but didn't respond like a QMX; falling back to wired UART");
-            usb_host_display_set_line (5, "CAT: no resp", DISPLAY_COLOR_RED);
-            g_use_usb_transport = false;
-            break;
+            else {
+                ESP_LOGW (TAG8, "USB CDC device open but didn't respond like a QMX; will keep retrying");
+                usb_host_display_set_line (5, "CAT: no resp", DISPLAY_COLOR_RED);
+                g_use_usb_transport = false;
+            }
         }
-        vTaskDelay (pdMS_TO_TICKS (250));
+        vTaskDelay (pdMS_TO_TICKS (500));
     }
-#endif
-
+#else
     // Try 38400 baud first (QMX standard), then fall back to other rates
     int    baud_rates[] = {38400, 9600, 19200, 4800};
     size_t num_rates    = sizeof (baud_rates) / sizeof (baud_rates[0]);
@@ -367,6 +476,7 @@ int KXRadio::connect() {
                 ESP_LOGI (TAG8, "no response received for baud rate %d", baud_rates[i]);
         }
     }
+#endif
 }
 
 /**
@@ -675,6 +785,7 @@ DELEGATE_BOOL (send_keyer_message,  (const char * message),                   me
 DELEGATE_BOOL (set_frequency,       (long hz, int tries),                     hz, tries)
 DELEGATE_BOOL (set_mode,            (radio_mode_t mode, int tries),           mode, tries)
 DELEGATE_BOOL (set_power,           (long power),                             power)
+DELEGATE_BOOL (set_radio_power,     (bool on),                                on)
 DELEGATE_BOOL (set_volume,          (long volume),                            volume)
 DELEGATE_BOOL (set_xmit_state,      (bool on),                                on)
 DELEGATE_BOOL (sync_time,           (const RadioTimeHms & client_time),       client_time)
@@ -682,6 +793,7 @@ DELEGATE_BOOL (tune_atu,            ())
 
 DELEGATE_BOOL_CONST (supports_keyer)
 DELEGATE_BOOL_CONST (supports_volume)
+DELEGATE_BOOL_CONST (supports_power_toggle)
 
 DELEGATE_VOID (ft8_set_tone, (long rfFreq, int audioFreq, long frequency), rfFreq, audioFreq, frequency)
 DELEGATE_VOID (ft8_tone_off, ())
@@ -708,7 +820,7 @@ void KXRadio::detect_radio_type() {
     if (!is_locked())
         ESP_LOGE (TAG8, "RADIO NOT LOCKED! (coding error in caller)");
 
-    if (m_radio_type == RadioType::KH1 || m_radio_type == RadioType::QMX)
+    if (m_radio_type == RadioType::KH1 || m_radio_type == RadioType::QMX || m_radio_type == RadioType::IC705)
         return;
 
     char response[17] = {0};

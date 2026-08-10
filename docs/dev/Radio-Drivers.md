@@ -4,7 +4,7 @@
 
 ## Overview
 
-SOTAcat supports multiple Elecraft radio models through a driver interface. Each radio has different CAT command implementations and capabilities. This document covers the driver architecture and specific implementation details for each supported radio.
+SOTAcat supports multiple radio models through a driver interface. Each radio has different CAT command implementations and capabilities. This document covers the driver architecture and specific implementation details for each supported radio.
 
 ## Driver Architecture
 
@@ -34,6 +34,71 @@ SOTAcat supports multiple Elecraft radio models through a driver interface. Each
 | KX2/KX3 | `KXRadioDriver` | MD0-MD8 (USB, LSB, CW, etc.) | ✅ | ✅ | `src/radio_driver_kx.cpp` |
 | KH1 | `KH1RadioDriver` | TBD | ✅ | ✅ | `src/radio_driver_kh1.cpp` |
 | QMX | `QMXRadioDriver` | MD0-MD8+ | ✅ | ✅ | `src/radio_driver_qmx.cpp` |
+| IC-705 | `IC705RadioDriver` | CI-V binary codes | ❌ (deferred) | ✅ | `src/radio_driver_ic705.cpp` |
+
+## IC-705 (Icom CI-V)
+
+Unlike the ASCII Kenwood-style protocols above, the IC-705 speaks Icom's binary
+CI-V protocol: frames of `FE FE <to> <from> <cmd> [data...] FD`, with the radio
+at address `0xA4` and the controller at `0xE0`. The framing lives in
+`src/civ_protocol.cpp`; the driver in `src/radio_driver_ic705.cpp` builds on it
+via `KXRadio`'s byte-oriented transport methods (`cat_write_bytes` /
+`cat_read_bytes`), since the ASCII primitives (`get_from_kx` etc.) can't carry
+binary frames.
+
+**Drain-and-keep-last reads:** the IC-705 emits unsolicited "transceive"
+broadcast frames (destination `0x00`) whenever the operator turns the dial, and
+responses can queue behind them. `civ::transact()` therefore drains the port
+until it goes quiet, parses every frame, discards frames not addressed to us,
+and keeps the *last* one matching the expected command — otherwise polled
+frequency falls progressively behind the dial. Transceive is deliberately left
+enabled on the radio (no `0x1A 0x05` settings writes).
+
+**USB detection:** the IC-705 (VID `0x0C26`, PID `0x0036`) is a composite CDC
+device behind the radio's internal USB hub (which also carries a separate USB
+audio codec — hub support in sdkconfig is required and already enabled). It has
+two CDC-ACM ports: interface pair 0/1 is CI-V (CAT), pair 2/3 is the
+GPS/RS-232C port. `usb_serial_host` opens interface 0 first and
+`KXRadio::connect()` confirms with a CI-V ID probe (`0x19 0x00` → model `0xA4`);
+on no answer it rotates to the other interface. Non-Icom VIDs keep the QMX
+`VN;` probe path.
+
+**Mode mapping:** Icom modes (LSB `0x00`, USB `0x01`, AM `0x02`, CW `0x03`,
+FM `0x05`, CW-R `0x07`) map to `radio_mode_t`; `MODE_DATA`/`MODE_DATA_R` map to
+USB-D/LSB-D via the separate data-mode flag (`0x1A 0x06`), which the driver
+always sets explicitly so leaving DATA actually clears the `-D` on the radio.
+RTTY (`0x04`/`0x08`) is reported as DATA/DATA_R.
+
+**CW keyer:** CI-V `0x17` sends ASCII text (max 30 chars/frame; charset
+`A-Z 0-9 space / ? , .`). The driver chunks long messages at word boundaries
+and polls TX status (`0x1C 0x00`) between chunks. The `0x17` command keys the
+transmitter by itself (verified on hardware).
+
+**Radio power (`PUT /api/v1/radioPower?state=0|1`):** CI-V `0x18` powers the
+radio off/on, exposed for automated test workflows. Measured behavior (2026-08,
+battery-less on external DC): power-**off** works, but the radio drops off the
+USB bus ~2.5 s later and does not re-enumerate while off, so power-**on** over
+USB cannot reach it. It also stays fully dark after a DC power cycle (no USB,
+no WLAN standby — the RS-BA1 network server does not listen while off), so no
+remote path can power the IC-705 on. Turning it back on needs the front-panel
+button, after which USB re-enumerates and CAT resumes automatically. (The
+`0xFE`-run wake + `0x18 0x01` ON sequence is implemented anyway; it can only
+matter in the brief window before de-enumeration.)
+
+**Deferred:** FT8 tone path, RF power get/set (`0x14 0x0A`), volume, ATU,
+message banks, time sync, and radio-state save/restore (zero-filled, QMX
+precedent).
+
+**Bench debugging tips (ESP32-S3-USB-OTG):** the default console is USB
+Serial/JTAG, which goes silent once USB host mode claims the PHY. For serial
+logs/panics during bench work, edit the generated (gitignored)
+`sdkconfig.esp32_s3_usb_otg_debug`: set `CONFIG_ESP_CONSOLE_UART_DEFAULT=y`,
+`CONFIG_ESP_CONSOLE_UART_NUM=0`, and unset `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG*`
+— logs then appear on the board's CP2102 port at 115200. Do not put this in
+`sdkconfig.defaults` (it would move the C3 envs' console too). Beware: opening
+that CP2102 port toggles DTR/RTS and **resets the board** (macOS does this
+regardless of application settings), so keep one monitor process open across a
+session rather than reopening per check.
 
 ## FT8 Implementation
 

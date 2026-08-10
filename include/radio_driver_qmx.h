@@ -6,6 +6,7 @@ class QMXRadioDriver : public IRadioDriver {
   public:
     bool supports_keyer () const override;
     bool supports_volume () const override;
+    bool supports_power_toggle () const override;
 
     bool get_frequency (KXRadio & radio, long & out_hz) override;
     bool set_frequency (KXRadio & radio, long hz, int tries) override;
@@ -21,6 +22,8 @@ class QMXRadioDriver : public IRadioDriver {
 
     bool get_xmit_state (KXRadio & radio, long & out_state) override;
     bool set_xmit_state (KXRadio & radio, bool on) override;
+
+    bool set_radio_power (KXRadio & radio, bool on) override;
 
     bool play_message_bank (KXRadio & radio, int bank) override;
     bool tune_atu (KXRadio & radio) override;

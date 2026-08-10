@@ -2,7 +2,7 @@
 
 #include "radio_driver.h"
 
-class KXRadioDriver : public IRadioDriver {
+class IC705RadioDriver : public IRadioDriver {
   public:
     bool supports_keyer () const override;
     bool supports_volume () const override;

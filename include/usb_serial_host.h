@@ -25,10 +25,16 @@
  * two peripherals cannot own the PHY at the same time.
  */
 
+// Icom's USB vendor ID. The IC-705 enumerates as VID 0x0C26 / PID 0x0036: a
+// composite CDC device with two ACM ports -- interface pair 0/1 is the CI-V
+// (CAT) port, pair 2/3 is the GPS/RS-232C port -- sitting behind the radio's
+// internal hub alongside a separate USB audio codec device.
+#define USB_VID_ICOM 0x0C26
+
 /**
  * Initialize USB host and start scanning for connected devices
  * Must be called before any other USB operations
- * 
+ *
  * @return ESP_OK if successful, ESP_ERR_* otherwise
  */
 esp_err_t usb_serial_host_init(void);
@@ -86,7 +92,22 @@ esp_err_t usb_serial_host_deinit(void);
 
 /**
  * Get connection status string for logging
- * 
+ *
  * @return Status string describing current USB state
  */
 const char *usb_serial_host_get_status(void);
+
+/**
+ * USB vendor/product ID of the most recently seen device (0 if none yet).
+ * Captured at enumeration time, before the CDC-ACM open completes.
+ */
+uint16_t usb_serial_host_get_vid(void);
+uint16_t usb_serial_host_get_pid(void);
+
+/**
+ * Close the currently open CDC device and advance to the next candidate CDC
+ * interface of the same physical device; the open task then re-opens on the
+ * new interface. Used when a CAT probe gets no answer because the wrong port
+ * of a multi-port device (e.g. the IC-705's GPS port) was opened.
+ */
+void usb_serial_host_cycle_interface(void);

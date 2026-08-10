@@ -458,6 +458,18 @@ const RADIO_CAPABILITIES = {
         // transmit SSB — flagged here as RX so future TX-aware UI can warn.
         modes: { "CW": "TXRX", "USB": "RX", "LSB": "RX" },
     },
+    "IC705": {
+        bands: {
+            "160m": "TXRX", "80m": "TXRX", "60m": "TXRX", "40m": "TXRX",
+            "30m":  "TXRX", "20m": "TXRX", "17m": "TXRX", "15m": "TXRX",
+            "12m":  "TXRX", "10m": "TXRX", "6m":  "TXRX", "2m":  "TXRX",
+            "70cm": "TXRX",
+        },
+        modes: {
+            "CW": "TXRX", "USB": "TXRX", "LSB": "TXRX", "DATA": "TXRX",
+            "AM": "TXRX", "FM":  "TXRX",
+        },
+    },
     "Unknown": null,
 };
 

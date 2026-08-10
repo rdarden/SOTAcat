@@ -14,6 +14,7 @@ class IRadioDriver {
 
     virtual bool supports_keyer () const = 0;
     virtual bool supports_volume () const = 0;
+    virtual bool supports_power_toggle () const = 0;
 
     virtual bool get_frequency (KXRadio & radio, long & out_hz) = 0;
     virtual bool set_frequency (KXRadio & radio, long hz, int tries) = 0;
@@ -29,6 +30,8 @@ class IRadioDriver {
 
     virtual bool get_xmit_state (KXRadio & radio, long & out_state) = 0;
     virtual bool set_xmit_state (KXRadio & radio, bool on) = 0;
+
+    virtual bool set_radio_power (KXRadio & radio, bool on) = 0;
 
     virtual bool play_message_bank (KXRadio & radio, int bank) = 0;
     virtual bool tune_atu (KXRadio & radio) = 0;

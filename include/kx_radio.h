@@ -30,7 +30,8 @@ enum class RadioType {
     KX2,
     KX3,
     KH1,
-    QMX
+    QMX,
+    IC705
 };
 
 typedef struct {
@@ -92,6 +93,13 @@ class KXRadio {
 
     void empty_kx_input_buffer (int wait_ms);
 
+    // Raw byte-oriented access to the active CAT transport (UART or USB CDC), for
+    // binary protocols like Icom CI-V that can't use the ASCII command primitives
+    // below (frames contain 0x00 bytes and are not semicolon-terminated).
+    void cat_flush_input ();
+    int  cat_write_bytes (const uint8_t * data, int len);
+    int  cat_read_bytes (uint8_t * buf, int max_len, int wait_ms);
+
     long get_from_kx (const char * command, int tries, int num_digits);
     bool put_to_kx (const char * command, int num_digits, long value, int tries);
     long get_from_kx_menu_item (uint8_t menu_item, int tries);
@@ -113,6 +121,8 @@ class KXRadio {
     bool tune_atu ();
     bool supports_keyer () const;
     bool supports_volume () const;
+    bool supports_power_toggle () const;
+    bool set_radio_power (bool on);
     bool send_keyer_message (const char * message);
 
     // True while an HTTP-accepted CW keyer request is outstanding (between
@@ -149,6 +159,7 @@ class KXRadio {
         case RadioType::KX3: return "KX3";
         case RadioType::KH1: return "KH1";
         case RadioType::QMX: return "QMX";
+        case RadioType::IC705: return "IC705";
         default: return "Unknown";
         }
     }

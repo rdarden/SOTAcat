@@ -730,7 +730,6 @@ function updateButtonPrivileges() {
     const frequencyHz = AppState.vfoFrequencyHz || DEFAULT_FREQUENCY_HZ;
     const currentMode = AppState.vfoMode || "USB";
     const userLicense = getUserLicenseClass();
-    const isQmx = AppState.radioType === "QMX";
 
     // Check each mode category (3 calls — SSB/AM/FM share PHONE)
     const cwStatus = checkPrivileges(frequencyHz, "CW", userLicense);
@@ -749,7 +748,7 @@ function updateButtonPrivileges() {
     const dataOk = isPermitted(dataStatus);
 
     // Mode buttons
-    const ids = { "btn-cw": cwOk, "btn-ssb": phoneOk, "btn-am": phoneOk, "btn-fm": phoneOk && !isQmx, "btn-data": dataOk };
+    const ids = { "btn-cw": cwOk, "btn-ssb": phoneOk, "btn-am": phoneOk, "btn-fm": phoneOk && !radioLacksFeature("fm"), "btn-data": dataOk };
     for (const [id, ok] of Object.entries(ids)) {
         const btn = document.getElementById(id);
         if (btn) btn.disabled = !ok;
@@ -763,19 +762,28 @@ function updateButtonPrivileges() {
     });
 }
 
-function updateRadioSpecificButtonStates() {
-    const radioType = AppState.radioType || "Unknown";
-    const disableQmxUnsupported = radioType === "QMX";
+// UI features each radio's CAT driver does NOT support. Radios not listed
+// (KX2/KX3/KH1, Unknown) support everything their mode buttons allow.
+const RADIO_UNSUPPORTED_FEATURES = {
+    "QMX":   { power: true, atu: true, fm: true },
+    "IC705": { power: true, atu: true },  // RF power set + ATU deferred in the CI-V driver
+};
 
+function radioLacksFeature(feature) {
+    const unsupported = RADIO_UNSUPPORTED_FEATURES[AppState.radioType];
+    return !!(unsupported && unsupported[feature]);
+}
+
+function updateRadioSpecificButtonStates() {
     const minPowerBtn = document.getElementById("min-power-button");
     const maxPowerBtn = document.getElementById("max-power-button");
     const tuneAtuBtn = document.getElementById("tune-atu-button");
     const fmBtn = document.getElementById("btn-fm");
 
-    if (minPowerBtn) minPowerBtn.disabled = disableQmxUnsupported;
-    if (maxPowerBtn) maxPowerBtn.disabled = disableQmxUnsupported;
-    if (tuneAtuBtn) tuneAtuBtn.disabled = disableQmxUnsupported;
-    if (fmBtn) fmBtn.disabled = disableQmxUnsupported;
+    if (minPowerBtn) minPowerBtn.disabled = radioLacksFeature("power");
+    if (maxPowerBtn) maxPowerBtn.disabled = radioLacksFeature("power");
+    if (tuneAtuBtn) tuneAtuBtn.disabled = radioLacksFeature("atu");
+    if (fmBtn) fmBtn.disabled = radioLacksFeature("fm");
 }
 
 // ============================================================================
