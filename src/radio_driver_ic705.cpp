@@ -420,8 +420,14 @@ bool IC705RadioDriver::restore_radio_state (KXRadio & radio, const kx_state_t * 
  * confirmed the VFO retunes cleanly mid-transmit in FM. Each 160 ms tone step
  * is a fire-and-forget CI-V set-frequency frame (no ACK wait -- the next
  * send()'s input flush clears accumulated ACKs), keeping per-tone latency to
- * the frame transmission time. TX power is whatever RF POWER the radio is set
- * to; this driver does not adjust it.
+ * the frame transmission time.
+ *
+ * Power policy (deliberate): FT8 transmits at whatever RF POWER the operator
+ * has set; this driver never adjusts it. The KX driver's forcing of TUN PWR
+ * is an Elecraft-specific mechanical need (its TUNE carrier has a separate
+ * power setting); the IC-705's FM carrier uses the normal RF POWER control,
+ * so the operator's choice stands. (CI-V 0x14 0x0A is the hook if
+ * programmatic power control is ever wanted.)
  */
 bool IC705RadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
     long base = rfFreq + audioFreq;

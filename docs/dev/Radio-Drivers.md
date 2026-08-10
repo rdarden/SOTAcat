@@ -95,7 +95,16 @@ canonical 12.68 s with no queue timeouts, and a SOTAmat-initiated
 transmission was received and decoded correctly by an independent nearby
 receiver). Each 160 ms tone step is a
 fire-and-forget CI-V `0x05` set-frequency frame; the next frame's input flush
-clears accumulated ACKs. TX power is whatever the radio's RF POWER is set to.
+clears accumulated ACKs.
+
+**FT8 power policy (deliberate):** the IC-705 transmits FT8 at whatever RF
+POWER the operator has set — the driver never adjusts it. This differs from
+the KX2/KX3 driver, which forces TUN PWR to 10 W, but that is a mechanical
+necessity unique to Elecraft (the KX generates its FT8 carrier via the TUNE
+function, governed by the separate TUN PWR menu rather than normal operating
+power). The IC-705's FM carrier uses the ordinary RF POWER setting, so the
+operator's deliberate power choice is respected. (CI-V `0x14 0x0A` is the
+hook if programmatic power control is ever wanted.)
 `get_radio_state`/`restore_radio_state` capture and restore mode + VFO
 frequency so the pre-FT8 state comes back after transmission.
 
