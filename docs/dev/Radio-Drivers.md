@@ -118,8 +118,10 @@ steps ~5% per UI click.
 **ATU tune** is two-stage. First the native tuner protocol: enable
 (`0x1C 0x01 0x01`) then tune-start (`0x1C 0x01 0x02`), polling status until
 it leaves "tuning" — this is the normal route for a tuner the radio
-recognizes on its control jack (genuine AH-705, mAT-705Plus; verified with a
-mAT-705Plus on a real antenna). When no tuner is recognized, the commands
+recognizes on its control jack: genuine AH-705, mAT-705Plus, or an Elecraft
+T1 via an AH-705-emulating cable (verified on a real antenna with a
+mAT-705Plus and with a T1 + Xteenna SpeedTune cable, including forced
+re-tunes across band changes). When no tuner is recognized, the commands
 ACK but status snaps back to "off" within ~300 ms with no RF keyed; the
 driver then falls back to what RF-sensing tuners without control-jack
 integration (original mAT-705, LDG, Elecraft T1...) need: it keys a ~3 W FM
