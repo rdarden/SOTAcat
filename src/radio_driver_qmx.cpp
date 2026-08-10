@@ -188,28 +188,27 @@ bool QMXRadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
 }
 
 void QMXRadioDriver::ft8_tone_on (KXRadio & radio) {
-    // For QMX, enable transmit mode for FT8 tone transmission
-    // Use direct UART write to maintain precise FT8 timing (160ms per tone)
-    (void) radio;
+    // For QMX, enable transmit mode for FT8 tone transmission.
+    // Uses the raw byte transport (UART or USB CDC) rather than the ASCII
+    // command primitives to keep precise FT8 timing (160ms per tone).
     ESP_LOGI (TAG8, "CAT TX (tone_on): 'TX;'");
-    uart_write_bytes (UART_NUM, "TX;", sizeof ("TX;") - 1);
-    uart_flush (UART_NUM);
+    radio.cat_write_bytes ((const uint8_t *)"TX;", sizeof ("TX;") - 1);
+    radio.cat_flush_input();
 }
 
 void QMXRadioDriver::ft8_tone_off (KXRadio & radio) {
-    (void) radio;
     // Per QMX CAT manual, proper FT8 key-up sequence:
     // 1. TA0; - key-up with shaped Blackman-Harris RF envelope
     // 2. Wait ~5ms for envelope shaping to finish
     // 3. RX; - return to receive mode
     // No mode switching needed - radio stays in DIGI mode between transmissions.
     ESP_LOGI (TAG8, "CAT TX (tone_off step 1): 'TA0;'");
-    uart_write_bytes (UART_NUM, "TA0;", sizeof ("TA0;") - 1);
-    uart_flush (UART_NUM);
+    radio.cat_write_bytes ((const uint8_t *)"TA0;", sizeof ("TA0;") - 1);
+    radio.cat_flush_input();
     vTaskDelay (pdMS_TO_TICKS (5));  // Wait for envelope shaping
     ESP_LOGI (TAG8, "CAT TX (tone_off step 2): 'RX;'");
-    uart_write_bytes (UART_NUM, "RX;", sizeof ("RX;") - 1);
-    uart_flush (UART_NUM);
+    radio.cat_write_bytes ((const uint8_t *)"RX;", sizeof ("RX;") - 1);
+    radio.cat_flush_input();
 }
 
 void QMXRadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) {
@@ -220,9 +219,8 @@ void QMXRadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, 
     //   frequency = rfFreq + audioFreq + tone_offset * 6.25 (absolute RF frequency)
     // We need to calculate:
     //   TA = audioFreq + (frequency - rfFreq - audioFreq) = frequency - rfFreq
-    (void) radio;
     (void) audioFreq;  // Already stored in m_ft8_audio_freq if needed
-    
+
     long audio_freq = frequency - rfFreq;
     
     // Clamp to reasonable FT8 audio range (0-3000 Hz)
@@ -234,6 +232,6 @@ void QMXRadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, 
     char command[16];
     snprintf (command, sizeof (command), "TA%ld;", audio_freq);
     ESP_LOGI (TAG8, "CAT TX (set_tone): '%s' (rf=%ld, target=%ld, audio=%ld)", command, rfFreq, frequency, audio_freq);
-    uart_write_bytes (UART_NUM, (const char *) command, strlen (command));
-    uart_flush (UART_NUM);
+    radio.cat_write_bytes ((const uint8_t *)command, strlen (command));
+    radio.cat_flush_input();
 }
