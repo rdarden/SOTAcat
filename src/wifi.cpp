@@ -12,8 +12,36 @@
 #include <lwip/sockets.h>
 #include <mdns.h>
 
+#ifdef ESP32_S3
+    #include "usb_host_display.h"
+#endif
+
 #include <esp_log.h>
 static const char * TAG8 = "sc:wifi....";
+
+// Rows 8/9 of the S3 status LCD show the WiFi association (hotspot SSID or the
+// joined network) and the device's IP address; no-ops on other hardware.
+static void display_wifi_status (const char * ssid_line, const char * ip_line) {
+#ifdef ESP32_S3
+    usb_host_display_set_line (8, ssid_line, DISPLAY_COLOR_WHITE);
+    usb_host_display_set_line (9, ip_line, DISPLAY_COLOR_WHITE);
+#else
+    (void)ssid_line;
+    (void)ip_line;
+#endif
+}
+
+// Formats a dotted-quad into the LCD's 13 columns; falls back to dropping the
+// first octet (".168.86.136" style) for addresses that would otherwise be
+// truncated into a different-but-valid-looking IP.
+static void format_ip_for_display (const esp_ip4_addr_t * ip, char * out, size_t out_size) {
+    char full[20];
+    snprintf (full, sizeof (full), IPSTR, IP2STR (ip));
+    if (strlen (full) <= 13)
+        snprintf (out, out_size, "%s", full);
+    else
+        snprintf (out, out_size, "%s", strchr (full, '.'));
+}
 
 // Shared variables accessed from multiple contexts - now using atomic for thread safety
 static std::atomic<bool> s_sta_connected{false};
@@ -188,10 +216,14 @@ static void wifi_event_handler (void * arg, esp_event_base_t event_base, int32_t
             break;
         }
 
-        case WIFI_EVENT_AP_START:
+        case WIFI_EVENT_AP_START: {
             ESP_LOGI (TAG8, "WIFI_EVENT_AP_START");
             s_wifi_ap_started = true;
+            char ssid_line[40];
+            snprintf (ssid_line, sizeof (ssid_line), "AP %s", g_ap_ssid);
+            display_wifi_status (ssid_line, "192.168.4.1");
             break;
+        }
         case WIFI_EVENT_AP_STOP:
             ESP_LOGI (TAG8, "WIFI_EVENT_AP_STOP");
             s_wifi_ap_started = false;
@@ -260,6 +292,21 @@ static void wifi_event_handler (void * arg, esp_event_base_t event_base, int32_t
                 if (start_mdns_service()) {
                     ESP_LOGI (TAG8, "mDNS started after IP acquisition");
                 }
+            }
+
+            // Show the joined SSID and our address (post-pinning) on the S3 LCD.
+            {
+                char           ssid_line[40] = "WiFi: ?";
+                wifi_ap_record_t ap_info;
+                if (esp_wifi_sta_get_ap_info (&ap_info) == ESP_OK)
+                    snprintf (ssid_line, sizeof (ssid_line), "%s", (const char *)ap_info.ssid);
+                esp_netif_ip_info_t ip_info;
+                char                ip_line[20] = "";
+                if (sta_netif && esp_netif_get_ip_info (sta_netif, &ip_info) == ESP_OK)
+                    format_ip_for_display (&ip_info.ip, ip_line, sizeof (ip_line));
+                else
+                    format_ip_for_display (&event->ip_info.ip, ip_line, sizeof (ip_line));
+                display_wifi_status (ssid_line, ip_line);
             }
             break;
         }

@@ -35,7 +35,7 @@ static const char * TAG8 = "sc:usb_disp";
 #define FONT_SCALE   2
 #define GLYPH_W      (8 * FONT_SCALE)
 #define CHAR_H       (8 * FONT_SCALE)
-#define CHAR_GAP     2   // px between characters, so letters aren't touching
+#define CHAR_GAP     1   // px between characters (13 columns; enough for a typical dotted-quad IP)
 #define CHAR_W       (GLYPH_W + CHAR_GAP)
 #define MARGIN_X     4   // px left/right margin, so the last column isn't flush against the bezel
 #define TEXT_COLS    ((LCD_H_RES - 2 * MARGIN_X) / CHAR_W)
@@ -184,7 +184,7 @@ static bool                   g_display_ready = false;
 // row's draw while a previous transfer was still reading from it -- e.g. a hub
 // and its downstream devices attaching within milliseconds of each other and
 // each updating a different row. Separate per-row buffers avoid that entirely.
-#define MAX_DISPLAY_ROWS 8
+#define MAX_DISPLAY_ROWS 10  // rows 0-7: USB/CAT/VFO status; row 8: WiFi SSID; row 9: IP address
 static uint16_t g_row_buf[MAX_DISPLAY_ROWS][LCD_H_RES * CHAR_H];
 static SemaphoreHandle_t g_row_buf_mutex = NULL;
 

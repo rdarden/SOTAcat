@@ -1,5 +1,9 @@
 # QMX via DigiPi Bridge (UART path)
 
+> **TODO:** remove this bridge (this doc, `sotacat_qmx_bridge.py`, and
+> `digipi-qmxcatbridge.patch`) once QMX-over-USB on the ESP32-S3 board is
+> confirmed as the standard QMX path.
+
 **Who this is for:** Users connecting a QRP Labs QMX to original (ESP32-C3)
 SOTAcat hardware, where the QMX's USB CAT port must be bridged to SOTAcat's
 wired UART. (On the ESP32-S3-USB-OTG board, SOTAcat talks to the QMX directly
