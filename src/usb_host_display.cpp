@@ -13,6 +13,7 @@ static const char * TAG8 = "sc:usb_disp";
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_st7789.h>
 #include <esp_lcd_panel_vendor.h>
+#include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -211,6 +212,25 @@ static void draw_char_into_row_buf (uint16_t * buf, int col, unsigned char c, ui
     }
 }
 
+// Kept to <=12 chars (this display's TEXT_COLS) so nothing gets truncated.
+static const char * reset_reason_str (esp_reset_reason_t reason) {
+    switch (reason) {
+    case ESP_RST_POWERON:   return "RST:POWERON";
+    case ESP_RST_EXT:       return "RST:EXT";
+    case ESP_RST_SW:        return "RST:SW";
+    case ESP_RST_PANIC:     return "RST:PANIC";
+    case ESP_RST_INT_WDT:   return "RST:INT_WDT";
+    case ESP_RST_TASK_WDT:  return "RST:TASK_WDT";
+    case ESP_RST_WDT:       return "RST:WDT";
+    case ESP_RST_DEEPSLEEP: return "RST:DEEPSLP";
+    case ESP_RST_BROWNOUT:  return "RST:BROWNOUT";
+    case ESP_RST_SDIO:      return "RST:SDIO";
+    case ESP_RST_USB:       return "RST:USB";
+    case ESP_RST_JTAG:      return "RST:JTAG";
+    default:                return "RST:UNKNOWN";
+    }
+}
+
 #endif  // ESP32_S3
 
 void usb_host_display_init (void) {
@@ -276,6 +296,9 @@ void usb_host_display_init (void) {
             esp_lcd_panel_draw_bitmap (g_panel, 0, y, LCD_H_RES, y + CHAR_H, g_row_buf[0]);
 
         usb_host_display_set_line (0, "USB HOST", DISPLAY_COLOR_WHITE);
+        // Shown once at boot so an unexpected reset (e.g. a brownout from a WiFi TX current
+        // spike) is visible on-screen without needing console access to run `esp_reset_reason`.
+        usb_host_display_set_line (7, reset_reason_str (esp_reset_reason()), DISPLAY_COLOR_YELLOW);
         ESP_LOGI (TAG8, "USB host status display initialized");
     #endif
 }

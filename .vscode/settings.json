@@ -25,5 +25,6 @@
     },
     "chat.tools.terminal.autoApprove": {
         "pio": true
-    }
+    },
+    "makefile.configureOnOpen": false
 }
