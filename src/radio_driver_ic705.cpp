@@ -28,8 +28,11 @@ static constexpr uint8_t CIV_CMD_CW_SEND   = 0x17;
 static constexpr uint8_t CIV_CMD_POWER     = 0x18;
 static constexpr uint8_t CIV_CMD_GET_ID    = 0x19;
 static constexpr uint8_t CIV_CMD_SETTINGS  = 0x1A;
+static constexpr uint8_t CIV_CMD_LEVEL     = 0x14;
 static constexpr uint8_t CIV_CMD_PTT       = 0x1C;
 static constexpr uint8_t CIV_SUB_DATA_MODE = 0x06;
+static constexpr uint8_t CIV_SUB_AF_GAIN   = 0x01;
+static constexpr uint8_t CIV_SUB_RF_POWER  = 0x0A;
 
 // Icom mode codes (payload byte of commands 0x04/0x06)
 static constexpr uint8_t ICOM_MODE_LSB    = 0x00;
@@ -54,7 +57,35 @@ bool IC705RadioDriver::supports_keyer () const {
 }
 
 bool IC705RadioDriver::supports_volume () const {
-    return false;
+    return true;
+}
+
+/*
+ * CI-V "level" commands (0x14) carry a 0-255 value as 4-digit big-endian BCD
+ * in two bytes: 255 -> 02 55, 42 -> 00 42. Used for AF gain (sub 0x01) and
+ * RF power (sub 0x0A).
+ */
+static bool get_civ_level (KXRadio & radio, uint8_t sub, long & out_level) {
+    uint8_t cmd[]       = { CIV_CMD_LEVEL, sub };
+    uint8_t payload[8];
+    size_t  payload_len = 0;
+    if (!civ::transact (radio, cmd, sizeof (cmd), CIV_CMD_LEVEL, sub, payload, sizeof (payload), payload_len))
+        return false;
+    if (payload_len < 2)
+        return false;
+    out_level = (payload[0] & 0x0F) * 100 + ((payload[1] >> 4) & 0x0F) * 10 + (payload[1] & 0x0F);
+    return true;
+}
+
+static bool set_civ_level (KXRadio & radio, uint8_t sub, long level) {
+    if (level < 0)
+        level = 0;
+    if (level > 255)
+        level = 255;
+    uint8_t cmd[] = { CIV_CMD_LEVEL, sub,
+                      (uint8_t)(level / 100),
+                      (uint8_t)((((level / 10) % 10) << 4) | (level % 10)) };
+    return civ::send_expect_ack (radio, cmd, sizeof (cmd));
 }
 
 bool IC705RadioDriver::supports_power_toggle () const {
@@ -185,28 +216,44 @@ bool IC705RadioDriver::set_mode (KXRadio & radio, radio_mode_t mode, int tries) 
     return false;
 }
 
+// The REST power API speaks watts (the UI sends 0 or 15, expecting radios to
+// cap gracefully). The IC-705's CI-V scale is 0-255 = 0-100% of maximum power,
+// nominally 10 W on external supply (5 W on battery -- the percent scale is of
+// whichever max applies, so watt figures assume the 10 W scale).
+static constexpr long IC705_MAX_WATTS = 10;
+
 bool IC705RadioDriver::get_power (KXRadio & radio, long & out_power) {
-    (void) radio;
-    (void) out_power;
-    return false;  // RF power control deferred (CI-V 0x14 0x0A when needed)
+    long level = 0;
+    if (!get_civ_level (radio, CIV_SUB_RF_POWER, level))
+        return false;
+    out_power = (level * IC705_MAX_WATTS + 127) / 255;
+    return true;
 }
 
 bool IC705RadioDriver::set_power (KXRadio & radio, long power) {
-    (void) radio;
-    (void) power;
-    return false;
+    if (power < 0)
+        power = 0;
+    if (power > IC705_MAX_WATTS)
+        power = IC705_MAX_WATTS;  // e.g. the UI's KX3-shaped "15" request
+    long level = (power * 255 + IC705_MAX_WATTS / 2) / IC705_MAX_WATTS;
+    ESP_LOGI (TAG8, "IC-705 set power: %ld W -> level %ld/255", power, level);
+    return set_civ_level (radio, CIV_SUB_RF_POWER, level);
 }
 
 bool IC705RadioDriver::get_volume (KXRadio & radio, long & out_volume) {
-    (void) radio;
-    (void) out_volume;
-    return false;
+    return get_civ_level (radio, CIV_SUB_AF_GAIN, out_volume);
 }
 
-bool IC705RadioDriver::set_volume (KXRadio & radio, long volume) {
-    (void) radio;
-    (void) volume;
-    return false;
+// One UI click per +/-5% of the 0-255 AF range (the handler passes +/-1).
+static constexpr long IC705_VOLUME_STEP_UNITS = 13;
+
+bool IC705RadioDriver::set_volume (KXRadio & radio, long delta) {
+    long current = 0;
+    if (!get_civ_level (radio, CIV_SUB_AF_GAIN, current))
+        return false;
+    long target = current + delta * IC705_VOLUME_STEP_UNITS;
+    ESP_LOGI (TAG8, "IC-705 volume: %ld + %ld*%ld -> %ld", current, delta, IC705_VOLUME_STEP_UNITS, target);
+    return set_civ_level (radio, CIV_SUB_AF_GAIN, target);
 }
 
 bool IC705RadioDriver::get_xmit_state (KXRadio & radio, long & out_state) {

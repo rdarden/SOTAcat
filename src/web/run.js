@@ -766,7 +766,7 @@ function updateButtonPrivileges() {
 // (KX2/KX3/KH1, Unknown) support everything their mode buttons allow.
 const RADIO_UNSUPPORTED_FEATURES = {
     "QMX":   { power: true, atu: true, fm: true },
-    "IC705": { power: true, atu: true },  // RF power set + ATU deferred in the CI-V driver
+    "IC705": { atu: true },  // no internal ATU (external AH-705 only); tune not implemented
 };
 
 function radioLacksFeature(feature) {

@@ -108,8 +108,15 @@ hook if programmatic power control is ever wanted.)
 `get_radio_state`/`restore_radio_state` capture and restore mode + VFO
 frequency so the pre-FT8 state comes back after transmission.
 
-**Deferred:** RF power get/set (`0x14 0x0A`), volume, ATU, message banks,
-and time sync.
+**RF power and volume:** CI-V level commands (`0x14`, two-byte BCD 0-255).
+RF power (sub `0x0A`) is exposed in watts on the REST API assuming the 10 W
+external-supply scale (the CI-V value is percent-of-max, so on battery the
+same percentage yields up to 5 W); UI requests above 10 W cap gracefully,
+matching KX2 behavior. AF volume (sub `0x01`) reports the raw 0-255 level and
+steps ~5% per UI click.
+
+**Deferred:** ATU tune (the IC-705 has no internal ATU; external AH-705
+only), message banks, and time sync.
 
 **Bench debugging tips (ESP32-S3-USB-OTG):** the default console is USB
 Serial/JTAG, which goes silent once USB host mode claims the PHY. For serial
