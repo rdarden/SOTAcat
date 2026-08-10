@@ -28,6 +28,7 @@ static constexpr uint8_t CIV_CMD_CW_SEND   = 0x17;
 static constexpr uint8_t CIV_CMD_POWER     = 0x18;
 static constexpr uint8_t CIV_CMD_GET_ID    = 0x19;
 static constexpr uint8_t CIV_CMD_SETTINGS  = 0x1A;
+static constexpr uint8_t CIV_CMD_VOICE_TX  = 0x28;  // sub 0x00: play voice TX memory (0=stop, 1-8)
 static constexpr uint8_t CIV_CMD_LEVEL     = 0x14;
 static constexpr uint8_t CIV_CMD_METER     = 0x15;  // read-only meters; sub 0x12 = SWR
 static constexpr uint8_t CIV_CMD_PTT       = 0x1C;  // 0x1C family: sub 0x00 = TX, sub 0x01 = tuner
@@ -325,9 +326,13 @@ bool IC705RadioDriver::set_radio_power (KXRadio & radio, bool on) {
 }
 
 bool IC705RadioDriver::play_message_bank (KXRadio & radio, int bank) {
-    (void) radio;
-    (void) bank;
-    return false;
+    // Maps SOTAcat's message banks onto the radio's voice TX memories T1-T8
+    // (the UI exposes 1 and 2). Voice memories only play in voice modes; the
+    // radio rejects the command in CW/RTTY, which surfaces as an error.
+    if (bank < 1 || bank > 8)
+        return false;
+    uint8_t cmd[] = { CIV_CMD_VOICE_TX, 0x00, (uint8_t)bank };
+    return civ::send_expect_ack (radio, cmd, sizeof (cmd));
 }
 
 // Attempt a tune through the radio's native tuner protocol (0x1C 0x01),
