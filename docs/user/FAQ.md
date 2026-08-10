@@ -35,7 +35,7 @@ The Firmware card in Settings checks [SOTAcat's GitHub Releases](https://github.
 
 ## Why is my CHASE list missing VHF/UHF (or other) spots?
 
-By default, CHASE filters to bands your KX2/KX3/KH1 natively supports. If you operate with a transverter, uncheck **"Show only bands my radio can access"** in Settings to see all spots.
+By default, CHASE filters to bands your radio natively supports. If you operate with a transverter, uncheck **"Show only bands my radio can access"** in Settings to see all spots.
 
 ---
 

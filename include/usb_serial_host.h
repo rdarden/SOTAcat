@@ -9,14 +9,16 @@
  * USB Serial Host Driver for ESP32-S3
  *
  * Provides CDC-ACM (Communications Device Class) support for communicating with
- * serial devices like the QMX radio over USB on ESP32-S3 boards, built on top of
+ * radios (QRP Labs QMX, Icom IC-705) over USB on ESP32-S3 boards, built on top of
  * the ESP-IDF `usb_host` library and the `usb_host_cdc_acm` component.
  *
- * QMX's exact USB VID/PID is not known in advance, so any CDC-ACM-compliant device
- * connected to the host port is accepted (see CDC_HOST_ANY_VID/CDC_HOST_ANY_PID usage
- * in usb_serial_host.cpp). If QMX turns out to enumerate via a USB-UART bridge chip
- * (FTDI/CP210x/CH34x) rather than native CDC-ACM, this driver will need one of the
- * matching espressif/usb_host_*_vcp components added instead of/alongside cdc_acm.
+ * Any CDC-ACM-compliant device connected to the host port is accepted (see
+ * CDC_HOST_ANY_VID/CDC_HOST_ANY_PID usage in usb_serial_host.cpp); the enumerated
+ * VID is surfaced so radio detection can pick the right CAT probe, and multi-port
+ * devices (the IC-705 exposes two CDC ports) are handled by rotating the CDC
+ * interface index when a probe gets no answer. A future radio that enumerates via
+ * a USB-UART bridge chip (FTDI/CP210x/CH34x) rather than native CDC-ACM would need
+ * one of the matching espressif/usb_host_*_vcp components added alongside cdc_acm.
  *
  * NOTE: the ESP32-S3 has a single physical USB PHY, shared between the native
  * "USB Serial/JTAG" console peripheral and the "USB-OTG" host peripheral used here.

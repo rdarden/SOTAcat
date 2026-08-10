@@ -243,7 +243,7 @@ void init_usb_if_available(void) {
         ESP_LOGW(TAG8, "");
         ESP_LOGW(TAG8, "⚠ No USB device detected after 1 second");
         ESP_LOGW(TAG8, "  Status: %s", usb_serial_host_get_status());
-        ESP_LOGW(TAG8, "  Action: Connect QMX radio to ESP32-S3 USB host port");
+        ESP_LOGW(TAG8, "  Action: Connect a USB radio (QMX, IC-705) to the ESP32-S3 USB host port");
         ESP_LOGW(TAG8, "");
     #endif
 }

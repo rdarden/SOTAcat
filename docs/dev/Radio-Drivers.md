@@ -34,7 +34,7 @@ SOTAcat supports multiple radio models through a driver interface. Each radio ha
 | KX2/KX3 | `KXRadioDriver` | MD0-MD8 (USB, LSB, CW, etc.) | ✅ | ✅ | `src/radio_driver_kx.cpp` |
 | KH1 | `KH1RadioDriver` | TBD | ✅ | ✅ | `src/radio_driver_kh1.cpp` |
 | QMX | `QMXRadioDriver` | MD0-MD8+ | ✅ | ✅ | `src/radio_driver_qmx.cpp` |
-| IC-705 | `IC705RadioDriver` | CI-V binary codes | ❌ (deferred) | ✅ | `src/radio_driver_ic705.cpp` |
+| IC-705 | `IC705RadioDriver` | CI-V binary codes | ✅ | ✅ | `src/radio_driver_ic705.cpp` |
 
 ## IC-705 (Icom CI-V)
 
@@ -76,14 +76,17 @@ transmitter by itself (verified on hardware).
 
 **Radio power (`PUT /api/v1/radioPower?state=0|1`):** CI-V `0x18` powers the
 radio off/on, exposed for automated test workflows. Measured behavior (2026-08,
-battery-less on external DC): power-**off** works, but the radio drops off the
-USB bus ~2.5 s later and does not re-enumerate while off, so power-**on** over
-USB cannot reach it. It also stays fully dark after a DC power cycle (no USB,
-no WLAN standby — the RS-BA1 network server does not listen while off), so no
-remote path can power the IC-705 on. Turning it back on needs the front-panel
-button, after which USB re-enumerates and CAT resumes automatically. (The
-`0xFE`-run wake + `0x18 0x01` ON sequence is implemented anyway; it can only
-matter in the brief window before de-enumeration.)
+battery-less on external DC, with the radio's *Power OFF Setting (for Remote
+Control)* at its default "Shutdown only"): power-**off** works, but the radio
+drops off the USB bus ~2.5 s later and does not re-enumerate while off, and it
+stays fully dark after a DC power cycle (no USB, no WLAN) — so power-**on**
+needs the front-panel button, after which USB re-enumerates and CAT resumes
+automatically. The radio's "Standby/Shutdown" option for that setting
+(`0x1A 0x05 0073`) is the documented hook for remote power-on via the radio's
+WLAN standby; SOTAcat does not use it (WLAN control is out of scope), but
+bench tooling could. (The `0xFE`-run wake + `0x18 0x01` ON sequence is
+implemented anyway; over USB it can only matter in the brief window before
+de-enumeration.)
 
 **FT8:** the IC-705 has no CAT command for audio tone generation (no CI-V
 equivalent of the QMX's `TA`), so FSK is synthesized KX-style: transmit a
@@ -274,28 +277,30 @@ void QMXRadioDriver::ft8_tone_off(KXRadio & radio) {
 
 To add support for a new radio:
 
-1. **Create header** (`include/radio_driver_xxx.h`):
-   ```cpp
-   class XXXRadioDriver : public RadioDriver {
-   public:
-       bool ft8_prepare(KXRadio & radio, long base_freq) override;
-       void ft8_tone_on(KXRadio & radio) override;
-       void ft8_tone_off(KXRadio & radio) override;
-       void ft8_set_tone(KXRadio & radio, long base_freq, long frequency) override;
-       // ... other methods
-   };
-   ```
+1. **Create the driver** (`include/radio_driver_xxx.h` +
+   `src/radio_driver_xxx.cpp`): subclass `IRadioDriver`
+   (`include/radio_driver.h`) and implement every pure-virtual method —
+   return `false` for operations the radio can't support (see
+   `QMXRadioDriver` for the minimal pattern, `IC705RadioDriver` for a full
+   binary-protocol implementation).
 
-2. **Create implementation** (`src/radio_driver_xxx.cpp`):
-   - Implement all pure virtual methods
-   - Refer to KX or QMX driver for pattern
+2. **Register the type**: add a value to the `RadioType` enum and a case to
+   `get_radio_type_string()` (`include/kx_radio.h`), a static driver
+   instance and a branch in `KXRadio::select_driver()` (`src/kx_radio.cpp`).
 
-3. **Register driver** in factory/initialization code
+3. **Add detection**: a probe in `KXRadio::connect()` — on the USB-host
+   path, branch on the enumerated VID (`usb_serial_host_get_vid()`) before
+   probing; on the UART path, extend the baud-scan ladder.
 
-4. **Test thoroughly:**
-   - Frequency changes
-   - Mode switching
-   - FT8 transmission (check logs for mode transitions and timing)
+4. **Gate the web UI**: add a `RADIO_CAPABILITIES` entry (bands/modes) in
+   `src/web/main.js`, and entries in `RADIO_UNSUPPORTED_FEATURES` /
+   `RADIO_MSG_BANKS` in `src/web/run.js` for anything the driver returns
+   `false` for.
+
+5. **Test thoroughly** against real hardware: frequency and mode round-trips
+   (including a dial-spin test while polling), keyer, TX state, FT8 timing —
+   and see the bench-testing notes above for pitfalls (dummy-load tunes,
+   console access on the S3 board).
 
 ## CAT Command Reference (QMX)
 

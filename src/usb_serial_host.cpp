@@ -496,12 +496,12 @@ const char * usb_serial_host_get_status (void) {
             else {
                 snprintf (status, sizeof (status),
                     "USB: \xE2\x9A\xA0 Initialized | No device seen yet | over_current=%s | "
-                    "Connect QMX via USB-A to host port", over_current ? "yes" : "no");
+                    "Connect radio (QMX, IC-705) via USB-A to host port", over_current ? "yes" : "no");
             }
         #else
             snprintf (status, sizeof (status),
                 "USB: \xE2\x9A\xA0 Initialized | Waiting for device enumeration | "
-                "Connect QMX via USB-A to host port");
+                "Connect radio (QMX, IC-705) via USB-A to host port");
         #endif
     }
 

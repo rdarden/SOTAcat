@@ -2,7 +2,7 @@
 
 **Who this is for:** First-time SOTAcat users
 **Time:** 5 minutes
-**Prereqs:** SOTAcat device, Elecraft KX2/KX3/KH1, smartphone
+**Prereqs:** SOTAcat device, a supported radio (Elecraft KX2/KX3/KH1, QRP Labs QMX, or Icom IC-705), smartphone
 
 ## Connect to SOTAcat
 

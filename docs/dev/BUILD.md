@@ -69,7 +69,7 @@ pio run --target upload
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENV` | `seeed_xiao_esp32c3_release` | Build environment |
+| `ENV` | `seeed_xiao_esp32c3_release` | Build environment (also available: `seeed_xiao_esp32c3_debug`, `esp32_s3_usb_otg_debug`, `esp32_s3_usb_otg_release` for the ESP32-S3-USB-OTG board with USB radios) |
 | `IP` | `sotacat.local` | Device for OTA upload |
 | `HOST` | `sotacat.local` | Device for testing |
 

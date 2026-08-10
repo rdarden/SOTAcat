@@ -1,6 +1,6 @@
 # SOTAcat — Wireless Rig Control for Field Ops
 
-WiFi CAT control for Elecraft KX2/KX3/KH1. Your phone becomes your radio console.
+WiFi CAT control for Elecraft KX2/KX3/KH1, QRP Labs QMX, and Icom IC-705. Your phone becomes your radio console.
 
 ## Highlights
 

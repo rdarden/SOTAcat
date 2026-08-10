@@ -325,9 +325,9 @@ int KXRadio::connect() {
     // as its onboard debug-UART bridge, and this USB-host configuration has no wired radio
     // connection anyway -- scanning it here would garble that console forever (confirmed: it
     // was masking a real panic's backtrace behind a wall of baud-mismatched noise). Unlike
-    // other hardware, just keep waiting for a QMX to show up over USB; never fall back to UART.
+    // other hardware, just keep waiting for a radio to show up over USB; never fall back to UART.
     while (true) {
-        // Re-checked on every lap (not just once at startup) so a QMX that attaches over
+        // Re-checked on every lap (not just once at startup) so a radio that attaches over
         // USB later -- e.g. after a runtime reset while it was already plugged in and
         // powered, which this board's USB host doesn't reliably re-enumerate -- still gets
         // picked up once it's freshly power-cycled, without requiring a full SOTAcat reboot.

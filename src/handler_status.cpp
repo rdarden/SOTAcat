@@ -57,7 +57,7 @@ esp_err_t handler_connectionStatus_get (httpd_req_t * req) {
 }
 
 /**
- * Handles an HTTP GET request for the ESP32-S3 USB Host status (e.g. whether a QMX
+ * Handles an HTTP GET request for the ESP32-S3 USB Host status (e.g. whether a radio
  * has been detected as a USB CDC-ACM device). Useful since, once USB host mode
  * claims the board's single USB PHY, the native USB serial console goes away.
  *
