@@ -115,8 +115,27 @@ same percentage yields up to 5 W); UI requests above 10 W cap gracefully,
 matching KX2 behavior. AF volume (sub `0x01`) reports the raw 0-255 level and
 steps ~5% per UI click.
 
-**Deferred:** ATU tune (the IC-705 has no internal ATU; external AH-705
-only), message banks, and time sync.
+**ATU tune** is two-stage. First the native tuner protocol: enable
+(`0x1C 0x01 0x01`) then tune-start (`0x1C 0x01 0x02`), polling status until
+it leaves "tuning" — this works only for a tuner the radio recognizes on its
+control jack (genuine AH-705). Measured with no recognized tuner: the
+commands ACK but status snaps back to "off" within ~300 ms and no RF is
+keyed (SDR Control shows the same brief key-up). When the native path
+doesn't engage, the driver falls back to what RF-sensing third-party tuners
+(mAT-705, LDG, Elecraft T1...) need: it keys a ~3 W FM carrier for 5 s so
+the tuner can match, reads the radio's SWR meter (`0x15 0x12`) during the
+carrier, reports matched only if the final SWR is ≲2.5:1, and restores the
+operator's power and mode afterward. Tuners with a manual tune button (the
+original mAT-705) need the button pressed before invoking ATU tune.
+
+**Time sync:** the REST time API supplies UTC, but the IC-705 clock keeps
+local time with a UTC-offset setting. The driver reads the offset
+(`0x1A 0x05 0170`) and writes correctly-offset local time (`0x1A 0x05 0166`,
+hh:mm only — rounded to the nearest minute, since the clock setting carries
+no seconds). Note the radio omits the setting-number echo in `0x1A 0x05`
+responses — the payload is bare data.
+
+**Deferred:** message banks (SOTAcat's CW macros cover the use case).
 
 **Bench debugging tips (ESP32-S3-USB-OTG):** the default console is USB
 Serial/JTAG, which goes silent once USB host mode claims the PHY. For serial

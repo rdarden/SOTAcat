@@ -765,8 +765,9 @@ function updateButtonPrivileges() {
 // UI features each radio's CAT driver does NOT support. Radios not listed
 // (KX2/KX3/KH1, Unknown) support everything their mode buttons allow.
 const RADIO_UNSUPPORTED_FEATURES = {
-    "QMX":   { power: true, atu: true, fm: true },
-    "IC705": { atu: true },  // no internal ATU (external AH-705 only); tune not implemented
+    "QMX": { power: true, atu: true, fm: true },
+    // IC705: full support (ATU tune drives an external tuner like the AH-705;
+    // the radio rejects the command if none is connected).
 };
 
 function radioLacksFeature(feature) {

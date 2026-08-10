@@ -29,10 +29,18 @@ static constexpr uint8_t CIV_CMD_POWER     = 0x18;
 static constexpr uint8_t CIV_CMD_GET_ID    = 0x19;
 static constexpr uint8_t CIV_CMD_SETTINGS  = 0x1A;
 static constexpr uint8_t CIV_CMD_LEVEL     = 0x14;
-static constexpr uint8_t CIV_CMD_PTT       = 0x1C;
+static constexpr uint8_t CIV_CMD_METER     = 0x15;  // read-only meters; sub 0x12 = SWR
+static constexpr uint8_t CIV_CMD_PTT       = 0x1C;  // 0x1C family: sub 0x00 = TX, sub 0x01 = tuner
 static constexpr uint8_t CIV_SUB_DATA_MODE = 0x06;
 static constexpr uint8_t CIV_SUB_AF_GAIN   = 0x01;
 static constexpr uint8_t CIV_SUB_RF_POWER  = 0x0A;
+static constexpr uint8_t CIV_SUB_ATU       = 0x01;  // status: 00=off, 01=on/matched, 02=tuning
+static constexpr uint8_t CIV_SUB_SWR       = 0x12;  // SWR meter (0-255; ~48=1.5:1, ~80=2:1, ~120=3:1)
+static constexpr uint8_t CIV_SUB_SETTINGS  = 0x05;  // 0x1A 0x05 <2-byte setting number> [data]
+
+// IC-705 setting numbers for 0x1A 0x05 (BCD byte pairs, per the CI-V reference)
+static constexpr uint8_t CIV_SET_TIME[2]       = { 0x01, 0x66 };  // clock hh mm (local)
+static constexpr uint8_t CIV_SET_UTC_OFFSET[2] = { 0x01, 0x70 };  // hh mm + sign (01 = negative)
 
 // Icom mode codes (payload byte of commands 0x04/0x06)
 static constexpr uint8_t ICOM_MODE_LSB    = 0x00;
@@ -61,15 +69,14 @@ bool IC705RadioDriver::supports_volume () const {
 }
 
 /*
- * CI-V "level" commands (0x14) carry a 0-255 value as 4-digit big-endian BCD
- * in two bytes: 255 -> 02 55, 42 -> 00 42. Used for AF gain (sub 0x01) and
- * RF power (sub 0x0A).
+ * CI-V "level" (0x14) and meter (0x15) commands carry a 0-255 value as
+ * 4-digit big-endian BCD in two bytes: 255 -> 02 55, 42 -> 00 42.
  */
-static bool get_civ_level (KXRadio & radio, uint8_t sub, long & out_level) {
-    uint8_t cmd[]       = { CIV_CMD_LEVEL, sub };
+static bool get_civ_level (KXRadio & radio, uint8_t civ_cmd, uint8_t sub, long & out_level) {
+    uint8_t cmd[]       = { civ_cmd, sub };
     uint8_t payload[8];
     size_t  payload_len = 0;
-    if (!civ::transact (radio, cmd, sizeof (cmd), CIV_CMD_LEVEL, sub, payload, sizeof (payload), payload_len))
+    if (!civ::transact (radio, cmd, sizeof (cmd), civ_cmd, sub, payload, sizeof (payload), payload_len))
         return false;
     if (payload_len < 2)
         return false;
@@ -224,7 +231,7 @@ static constexpr long IC705_MAX_WATTS = 10;
 
 bool IC705RadioDriver::get_power (KXRadio & radio, long & out_power) {
     long level = 0;
-    if (!get_civ_level (radio, CIV_SUB_RF_POWER, level))
+    if (!get_civ_level (radio, CIV_CMD_LEVEL, CIV_SUB_RF_POWER, level))
         return false;
     out_power = (level * IC705_MAX_WATTS + 127) / 255;
     return true;
@@ -241,7 +248,7 @@ bool IC705RadioDriver::set_power (KXRadio & radio, long power) {
 }
 
 bool IC705RadioDriver::get_volume (KXRadio & radio, long & out_volume) {
-    return get_civ_level (radio, CIV_SUB_AF_GAIN, out_volume);
+    return get_civ_level (radio, CIV_CMD_LEVEL, CIV_SUB_AF_GAIN, out_volume);
 }
 
 // One UI click per +/-5% of the 0-255 AF range (the handler passes +/-1).
@@ -249,7 +256,7 @@ static constexpr long IC705_VOLUME_STEP_UNITS = 13;
 
 bool IC705RadioDriver::set_volume (KXRadio & radio, long delta) {
     long current = 0;
-    if (!get_civ_level (radio, CIV_SUB_AF_GAIN, current))
+    if (!get_civ_level (radio, CIV_CMD_LEVEL, CIV_SUB_AF_GAIN, current))
         return false;
     long target = current + delta * IC705_VOLUME_STEP_UNITS;
     ESP_LOGI (TAG8, "IC-705 volume: %ld + %ld*%ld -> %ld", current, delta, IC705_VOLUME_STEP_UNITS, target);
@@ -323,9 +330,92 @@ bool IC705RadioDriver::play_message_bank (KXRadio & radio, int bank) {
     return false;
 }
 
-bool IC705RadioDriver::tune_atu (KXRadio & radio) {
-    (void) radio;
+// Attempt a tune through the radio's native tuner protocol (0x1C 0x01),
+// which works only for a tuner the radio recognizes on its control jack
+// (genuine AH-705). Returns true on a confirmed match; false if the tuner
+// never engaged or the tune failed -- measured behavior with no recognized
+// tuner is that the enable/tune commands ACK but the status snaps back to
+// "off" within ~300 ms without keying any RF.
+static bool civ_tuner_tune (KXRadio & radio) {
+    // The tune-start command is a no-op while the tuner function is off
+    // (status 0x00), so switch the tuner on first if needed.
+    uint8_t query[]     = { CIV_CMD_PTT, CIV_SUB_ATU };
+    uint8_t payload[8];
+    size_t  payload_len = 0;
+    if (civ::transact (radio, query, sizeof (query), CIV_CMD_PTT, CIV_SUB_ATU, payload, sizeof (payload), payload_len) &&
+        payload_len >= 1 && payload[0] == 0x00) {
+        uint8_t enable[] = { CIV_CMD_PTT, CIV_SUB_ATU, 0x01 };
+        if (!civ::send_expect_ack (radio, enable, sizeof (enable)))
+            return false;
+        vTaskDelay (pdMS_TO_TICKS (300));
+    }
+
+    uint8_t start[] = { CIV_CMD_PTT, CIV_SUB_ATU, 0x02 };
+    if (!civ::send_expect_ack (radio, start, sizeof (start)))
+        return false;
+
+    // Give the tune cycle time to engage before trusting a non-tuning status.
+    vTaskDelay (pdMS_TO_TICKS (750));
+
+    for (int i = 0; i < 60; ++i) {  // up to ~15s more
+        if (civ::transact (radio, query, sizeof (query), CIV_CMD_PTT, CIV_SUB_ATU, payload, sizeof (payload), payload_len) &&
+            payload_len >= 1 && payload[0] != 0x02) {
+            bool matched = (payload[0] == 0x01);
+            ESP_LOGI (TAG8, "native tuner tune finished: %s", matched ? "matched" : "not engaged / failed");
+            return matched;
+        }
+        vTaskDelay (pdMS_TO_TICKS (250));
+    }
+    ESP_LOGE (TAG8, "native tuner tune did not finish within timeout");
     return false;
+}
+
+// Fallback for RF-sensing third-party tuners (mAT-705, LDG, Elecraft T1...):
+// key a reduced-power FM carrier for a few seconds so the tuner can detect RF
+// and match, watching the radio's SWR meter to report an honest result. The
+// operator's power setting and mode are restored afterward. (For tuners with
+// a manual tune button, like the original mAT-705, press it first.)
+static bool carrier_tune (KXRadio & radio, IC705RadioDriver & driver) {
+    constexpr long TUNE_POWER_LEVEL = 77;   // ~30% = ~3 W: enough to tune, kind to the tuner
+    constexpr long SWR_GOOD_MAX     = 100;  // meter units; ~2.5:1 (48=1.5, 80=2.0, 120=3.0)
+
+    long         saved_power = -1;
+    radio_mode_t saved_mode  = MODE_UNKNOWN;
+    if (!get_civ_level (radio, CIV_CMD_LEVEL, CIV_SUB_RF_POWER, saved_power) ||
+        !driver.get_mode (radio, saved_mode))
+        return false;
+
+    bool ok = set_civ_level (radio, CIV_SUB_RF_POWER, TUNE_POWER_LEVEL) &&
+              driver.set_mode (radio, MODE_FM, SC_KX_COMMUNICATION_RETRIES) &&
+              driver.set_xmit_state (radio, true);
+
+    long last_swr = -1;
+    if (ok) {
+        // ~5s of carrier; sample the SWR meter as the tuner works.
+        for (int i = 0; i < 10; ++i) {
+            vTaskDelay (pdMS_TO_TICKS (500));
+            long swr = -1;
+            if (get_civ_level (radio, CIV_CMD_METER, CIV_SUB_SWR, swr) && swr >= 0)
+                last_swr = swr;
+        }
+    }
+
+    driver.set_xmit_state (radio, false);
+    set_civ_level (radio, CIV_SUB_RF_POWER, saved_power);
+    if (saved_mode != MODE_UNKNOWN)
+        driver.set_mode (radio, saved_mode, SC_KX_COMMUNICATION_RETRIES);
+
+    bool matched = ok && last_swr >= 0 && last_swr <= SWR_GOOD_MAX;
+    ESP_LOGI (TAG8, "carrier tune done: keyed=%d final SWR meter=%ld -> %s",
+              ok, last_swr, matched ? "matched" : "no match");
+    return matched;
+}
+
+bool IC705RadioDriver::tune_atu (KXRadio & radio) {
+    if (civ_tuner_tune (radio))
+        return true;
+    ESP_LOGI (TAG8, "no native tuner result; falling back to carrier keying for RF-sensing tuners");
+    return carrier_tune (radio, *this);
 }
 
 // Poll the PTT/TX status until the radio reports receive, or timeout.
@@ -424,10 +514,46 @@ bool IC705RadioDriver::send_keyer_message (KXRadio & radio, const char * message
     return ok;
 }
 
+static inline uint8_t to_bcd (int v) {
+    return (uint8_t)(((v / 10) << 4) | (v % 10));
+}
+
 bool IC705RadioDriver::sync_time (KXRadio & radio, const RadioTimeHms & client_time) {
-    (void) radio;
-    (void) client_time;
-    return false;
+    // client_time is UTC (see handler_time.cpp), but the IC-705's clock keeps
+    // LOCAL time alongside a configured UTC-offset setting. Read the offset
+    // and write correctly-offset local time so both the on-screen clock and
+    // the radio's notion of UTC end up right.
+    uint8_t off_query[] = { CIV_CMD_SETTINGS, CIV_SUB_SETTINGS, CIV_SET_UTC_OFFSET[0], CIV_SET_UTC_OFFSET[1] };
+    uint8_t payload[8];
+    size_t  payload_len = 0;
+    if (!civ::transact (radio, off_query, sizeof (off_query), CIV_CMD_SETTINGS, CIV_SUB_SETTINGS, payload, sizeof (payload), payload_len))
+        return false;
+    // Measured on hardware: the IC-705 does NOT echo the setting number in
+    // 0x1A 0x05 responses (matching its 0x1A 0x06 behavior) -- the payload is
+    // the bare data: hh mm sign (sign 01 = negative offset). Tolerate an
+    // echoing variant defensively in case other firmware revisions differ.
+    const uint8_t * d = payload;
+    if (payload_len >= 5 && payload[0] == CIV_SET_UTC_OFFSET[0] && payload[1] == CIV_SET_UTC_OFFSET[1])
+        d = payload + 2;
+    else if (payload_len != 3) {
+        ESP_LOGW (TAG8, "unexpected UTC-offset payload (%u bytes)", (unsigned)payload_len);
+        return false;
+    }
+    int  off_minutes = ((d[0] >> 4) * 10 + (d[0] & 0x0F)) * 60 + ((d[1] >> 4) * 10 + (d[1] & 0x0F));
+    bool negative    = (d[2] == 0x01);
+
+    // The clock setting carries only hh:mm, so round to the nearest minute.
+    // (Rare edge: rounding across midnight leaves the date one day stale
+    // until the next sync -- accepted for simplicity, as on the KX.)
+    int total = client_time.hrs * 60 + client_time.min + (client_time.sec >= 30 ? 1 : 0);
+    total += negative ? -off_minutes : off_minutes;
+    total = ((total % 1440) + 1440) % 1440;
+
+    uint8_t set_cmd[] = { CIV_CMD_SETTINGS, CIV_SUB_SETTINGS, CIV_SET_TIME[0], CIV_SET_TIME[1],
+                          to_bcd (total / 60), to_bcd (total % 60) };
+    ESP_LOGI (TAG8, "IC-705 clock set to %02d:%02d local (UTC offset %s%d min)",
+              total / 60, total % 60, negative ? "-" : "+", off_minutes);
+    return civ::send_expect_ack (radio, set_cmd, sizeof (set_cmd));
 }
 
 bool IC705RadioDriver::get_radio_state (KXRadio & radio, kx_state_t * state) {
