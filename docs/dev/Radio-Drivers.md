@@ -91,7 +91,9 @@ steady carrier and step the dial for each of the 79 tones. FM mode provides
 the carrier — PTT with no audio transmits an unmodulated carrier at exactly
 the dial frequency, and the VFO retunes cleanly mid-transmit (bench-verified:
 8/8 six-Hz steps while keyed; a full 79-tone transmission completes in the
-canonical 12.68 s with no queue timeouts). Each 160 ms tone step is a
+canonical 12.68 s with no queue timeouts, and a SOTAmat-initiated
+transmission was received and decoded correctly by an independent nearby
+receiver). Each 160 ms tone step is a
 fire-and-forget CI-V `0x05` set-frequency frame; the next frame's input flush
 clears accumulated ACKs. TX power is whatever the radio's RF POWER is set to.
 `get_radio_state`/`restore_radio_state` capture and restore mode + VFO
