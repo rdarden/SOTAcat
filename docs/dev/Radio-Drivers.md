@@ -308,18 +308,29 @@ void QMXRadioDriver::ft8_tone_off(KXRadio & radio) {
 - Direct UART writes are used for TA, TX, RX commands (bypasses CAT interface delays for precision)
 - MD mode commands use CAT interface with verification for reliability
 
-**Future work (QMX):**
+**Future work (QMX)** — both verified feasible on real hardware (QMX
+firmware 1.04.005, bench 2026-08-10):
 
-- **AM mode:** recent QMX firmware supports AM, but it ships disabled and
-  must be enabled in the radio's menu. The UI currently offers the AM button
-  unconditionally for QMX. TODO: detect at connect time whether AM is enabled
-  on the attached unit and gate the button accordingly (like the FM gate in
-  `run.js` `RADIO_UNSUPPORTED_FEATURES`).
 - **Band coverage:** QMX hardware ships in band-group variants (and the QMX+
   covers 160m–6m), so `RADIO_CAPABILITIES` in `main.js` deliberately has no
   static QMX entry — band filtering is permissive. TODO: query the connected
-  unit for its actual band coverage and populate a capabilities entry
-  dynamically so the band buttons match the radio.
+  unit and populate an entry dynamically. **Verified recipe (read-only, no
+  VFO disturbance):** the Menu Manager Get command reads the Band
+  Configuration table per column, e.g. `MMBand config.|Band name (m)[3];`
+  → `MM12;` (12m in column 3). Useful rows: `Band name (m)`,
+  `Frequency min.`, `Frequency center`, `Frequency max.`, `Transmit`
+  (ENABLED/DISABLED). Unconfigured columns return `0`/`DISABLED`; 16 columns
+  total. The `BN`/`BN<n>` band-number command also exists (set of a
+  non-configured index errors with `?;`) but it moves the VFO and refused
+  the configured 11m column on the bench unit, so the MM table read is the
+  authoritative path.
+- **AM mode:** recent QMX firmware supports AM (`MD5;`), normally hidden
+  behind a menu setting. On the bench unit the CAT set `MD5;` was accepted
+  regardless. **Firmware quirk (measured, 1.04.005): once in AM, every
+  subsequent `MD` set returns `?;` until an `MU;` (reload configuration
+  parameters) is issued — after `MU;` the radio reverts to its configured
+  mode.** Any future AM support must handle this escape; also worth
+  reporting to QRP Labs.
 
 ## Adding a New Radio Driver
 
