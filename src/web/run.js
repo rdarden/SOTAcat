@@ -767,6 +767,8 @@ function updateButtonPrivileges() {
 
 // UI features each radio's CAT driver does NOT support. Radios not listed
 // (KX2/KX3/KH1, Unknown) support everything their mode buttons allow.
+// TODO(QMX): recent firmware adds AM mode but ships with it menu-disabled;
+// detect at connect time whether it's enabled and gate the AM button like FM.
 const RADIO_UNSUPPORTED_FEATURES = {
     "QMX": { power: true, atu: true, fm: true },
     // IC705: full support (ATU tune drives an external tuner like the AH-705;

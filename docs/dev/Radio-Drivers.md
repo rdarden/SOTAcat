@@ -308,6 +308,19 @@ void QMXRadioDriver::ft8_tone_off(KXRadio & radio) {
 - Direct UART writes are used for TA, TX, RX commands (bypasses CAT interface delays for precision)
 - MD mode commands use CAT interface with verification for reliability
 
+**Future work (QMX):**
+
+- **AM mode:** recent QMX firmware supports AM, but it ships disabled and
+  must be enabled in the radio's menu. The UI currently offers the AM button
+  unconditionally for QMX. TODO: detect at connect time whether AM is enabled
+  on the attached unit and gate the button accordingly (like the FM gate in
+  `run.js` `RADIO_UNSUPPORTED_FEATURES`).
+- **Band coverage:** QMX hardware ships in band-group variants (and the QMX+
+  covers 160m–6m), so `RADIO_CAPABILITIES` in `main.js` deliberately has no
+  static QMX entry — band filtering is permissive. TODO: query the connected
+  unit for its actual band coverage and populate a capabilities entry
+  dynamically so the band buttons match the radio.
+
 ## Adding a New Radio Driver
 
 To add support for a new radio:

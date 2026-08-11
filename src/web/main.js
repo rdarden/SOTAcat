@@ -428,6 +428,11 @@ const BAND_PLAN = {
 // (e.g. KX2 + 2 m transverter). UI gating that disables controls strictly
 // from this table would lock those users out — see chase.js for the
 // opt-out (filterBandsEnabled) pattern.
+//
+// QMX has no entry on purpose: the hardware ships in band-group variants
+// (QMX+ covers 160m-6m), so a static table would be wrong for someone's
+// unit. TODO: query the connected QMX for its band coverage at connect
+// time and populate an entry dynamically.
 const RADIO_CAPABILITIES = {
     "KX2": {
         bands: {
