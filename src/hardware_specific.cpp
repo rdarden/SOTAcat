@@ -234,11 +234,9 @@ void init_usb_if_available(void) {
             vTaskDelay(pdMS_TO_TICKS(100));
             
             if (usb_serial_host_is_connected()) {
-                ESP_LOGI(TAG8, "");
-                ESP_LOGI(TAG8, "╔════════════════════════════════════════════════════╗");
-                ESP_LOGI(TAG8, "║         ✓ QMX RADIO DETECTED ON USB HOST!           ║");
-                ESP_LOGI(TAG8, "╚════════════════════════════════════════════════════╝");
-                ESP_LOGI(TAG8, "");
+                // Only enumeration is known here; radio identification (QMX vs.
+                // IC-705) happens later when connect() probes the CAT interface.
+                ESP_LOGI(TAG8, "✓ USB device enumerated on host port");
                 return;
             }
             
