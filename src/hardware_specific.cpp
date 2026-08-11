@@ -214,41 +214,22 @@ void init_usb_if_available(void) {
         if (gpio_get_level((gpio_num_t)21))
             ESP_LOGW(TAG8, "OVER_CURRENT asserted on USB host port!");
 
-        ESP_LOGI(TAG8, "");
-        ESP_LOGI(TAG8, "╔════════════════════════════════════════════════════╗");
-        ESP_LOGI(TAG8, "║  Attempting USB Host Initialization for USB Radio  ║");
-        ESP_LOGI(TAG8, "╚════════════════════════════════════════════════════╝");
-        
         esp_err_t ret = usb_serial_host_init();
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG8, "✗ USB host initialization FAILED: %s", esp_err_to_name(ret));
-            ESP_LOGE(TAG8, "  Falling back to UART mode");
+            ESP_LOGE(TAG8, "USB host init failed (%s); falling back to UART", esp_err_to_name(ret));
             return;
         }
-        
-        ESP_LOGI(TAG8, "✓ USB host initialized successfully");
-        
-        // Give USB host time to enumerate devices
-        ESP_LOGI(TAG8, "Waiting for device enumeration...");
+
+        // Give the USB host a moment to enumerate an already-attached device.
+        // Only enumeration is known here; radio identification (QMX vs. IC-705)
+        // happens later when connect() probes the CAT interface.
         for (int i = 0; i < 10; i++) {
             vTaskDelay(pdMS_TO_TICKS(100));
-            
             if (usb_serial_host_is_connected()) {
-                // Only enumeration is known here; radio identification (QMX vs.
-                // IC-705) happens later when connect() probes the CAT interface.
-                ESP_LOGI(TAG8, "✓ USB device enumerated on host port");
+                ESP_LOGI(TAG8, "USB device enumerated on host port");
                 return;
             }
-            
-            if (i == 4) {
-                ESP_LOGI(TAG8, "  [%d/10] Still waiting for device...", i + 1);
-            }
         }
-        
-        ESP_LOGW(TAG8, "");
-        ESP_LOGW(TAG8, "⚠ No USB device detected after 1 second");
-        ESP_LOGW(TAG8, "  Status: %s", usb_serial_host_get_status());
-        ESP_LOGW(TAG8, "  Action: Connect a USB radio (QMX, IC-705) to the ESP32-S3 USB host port");
-        ESP_LOGW(TAG8, "");
+        ESP_LOGI(TAG8, "no USB device after 1s (%s); will keep watching for hotplug", usb_serial_host_get_status());
     #endif
 }
