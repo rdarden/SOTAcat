@@ -29,12 +29,21 @@ SOTAcat supports multiple radio models through a driver interface. Each radio ha
 
 ### Supported Radios
 
-| Radio | Class | Mode IDs | FT8 Support | Keyer | File |
-|-------|-------|----------|-------------|-------|------|
-| KX2/KX3 | `KXRadioDriver` | MD0-MD8 (USB, LSB, CW, etc.) | ✅ | ✅ | `src/radio_driver_kx.cpp` |
-| KH1 | `KH1RadioDriver` | TBD | ✅ | ✅ | `src/radio_driver_kh1.cpp` |
-| QMX | `QMXRadioDriver` | MD0-MD8+ | ✅ | ✅ | `src/radio_driver_qmx.cpp` |
-| IC-705 | `IC705RadioDriver` | CI-V binary codes | ✅ | ✅ | `src/radio_driver_ic705.cpp` |
+| Radio | Class | Protocol | Hardware | FT8 | Keyer | File |
+|-------|-------|----------|----------|-----|-------|------|
+| KX2/KX3 | `KXRadioDriver` | Elecraft ASCII CAT (`MD1`–`MD9`: LSB, USB, CW, FM, AM, DATA, CW-REV, DATA-REV — no MD0/MD8) | C3 (UART) | ✅ | ✅ | `src/radio_driver_kx.cpp` |
+| KH1 | `KH1RadioDriver` | Reduced Elecraft dialect (`MD0`=CW, `MD1`=LSB, `MD2`=USB; several reads parse `DS` display strings) | C3 (UART) | ✅ | ✅ | `src/radio_driver_kh1.cpp` |
+| QMX | `QMXRadioDriver` | Kenwood TS-480-style ASCII (`MD1,2,3,5,6,7,9`; `MD8` is SWR-tune, no MD0/MD4) | S3 (USB) | ✅ | ✅ | `src/radio_driver_qmx.cpp` |
+| IC-705 | `IC705RadioDriver` | Icom CI-V binary | S3 (USB) | ✅ | ✅ | `src/radio_driver_ic705.cpp` |
+
+**Radio support is split by hardware variant.** The ESP32-C3 boards reach
+radios only through their wired ACC-jack UART; the ESP32-S3-USB-OTG build is
+USB-host-only and never scans its UART (its UART pins double as the board's
+debug console — see the comment in `KXRadio::connect()`). The Elecraft radios
+have no USB CAT interface, so they cannot appear on the S3. In the other
+direction the C3's UART scan detects Elecraft radios and also probes for a
+QMX (whose PTT/AUX port can be configured as a UART CAT port), but not the
+IC-705 — its CI-V probe exists only in the S3's USB path.
 
 ## IC-705 (Icom CI-V)
 
@@ -217,19 +226,41 @@ mode at the FT8 frequency.
 
 **File:** `src/radio_driver_kx.cpp`
 
-Uses MD0 (USB) mode for FT8 transmission.
+FT8 runs in **CW mode (MD3)** and keys the carrier with switch emulation —
+there is no `TX;`/`TA` on Elecraft radios (those are QMX commands).
 
 **Sequence:**
-- `ft8_prepare()`: Set frequency (FA), set mode to USB (MD0)
-- `ft8_tone_on()`: Send TX; command
-- `ft8_set_tone()`: Send TA (Transmit Audio) commands with tone frequency
-- `ft8_tone_off()`: Send TA0; then RX; to key-up and return to RX
+- `ft8_prepare()`: VFO A/no-split (`FR0;`/`FT0;`), tune `FA` to
+  rfFreq + audioFreq, set **CW mode (MD3)**, enable APF (`AP1;`), and force
+  **TUN PWR (menu 58) to 10 W** with readback verification
+- `ft8_tone_on()` / `ft8_tone_off()`: `SWH16;` — switch-hold emulation of
+  holding the XMIT button, which is the TUNE function (keys a steady
+  carrier; the same command toggles it off). See Tables 8/8A of the
+  Elecraft Programmer's Reference
+- `ft8_set_tone()`: rewrite `FA` with rfFreq + audioFreq + tone offset —
+  the carrier itself steps to each FT8 tone
+
+**Power policy:** Elecraft FT8 transmits at a fixed 10 W (the forced TUN
+PWR setting), long-standing upstream behavior. The IC-705 driver instead
+transmits FT8 at whatever RF POWER the operator has set — an explicit
+choice made when that driver was added. The divergence is intentional,
+not an oversight.
 
 #### KH1 Radio Driver
 
 **File:** `src/radio_driver_kh1.cpp`
 
-Similar to KX driver; see source for implementation details.
+The KH1 speaks a **reduced Elecraft dialect**, not the full KX command set:
+
+- Mode set uses `MD0;` for **CW** (unlike the KX, where MD0 doesn't exist
+  and CW is MD3), `MD1;` LSB, `MD2;` USB — nothing else
+- Mode, power, and time are **read by parsing the `DS1`/`DS2` display
+  strings** (e.g. character 13 of `DS1` is `L`/`U`/`C` for the mode);
+  power toggles between LOW/HIGH via `SW2H;` switch emulation
+- FT8: `ft8_prepare()` zeroes the CW offset (`FO00;`) and tunes to
+  rfFreq + audioFreq; the carrier is keyed with `HK1;`/`HK0;` (key-line
+  emulation) instead of the KX's `SWH16;` TUNE toggle; tones step `FA`
+  like the KX; `ft8_tone_off()` restores the offset (`FO99;`)
 
 #### QMX Radio Driver
 

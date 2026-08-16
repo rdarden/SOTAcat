@@ -357,7 +357,9 @@ bool KXRadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
     if (!ok)
         return false;
 
-    // Set TUN PWR to 10W (100 = 10.0W in 0.1W units) with readback verification
+    // Set TUN PWR to 10W (100 = 10.0W in 0.1W units) with readback verification.
+    // Deliberate policy: Elecraft FT8 always transmits at this fixed power,
+    // unlike the IC-705 driver which honors the operator's RF POWER setting.
     constexpr long FT8_TUN_PWR = 100;  // 10.0 watts
     if (!radio.put_to_kx_menu_item (58, FT8_TUN_PWR, SC_KX_COMMUNICATION_RETRIES)) {
         return false;

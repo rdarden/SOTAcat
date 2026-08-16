@@ -35,11 +35,17 @@ A small WiFi module that plugs into your Elecraft KX2 or KX3 ACC (CAT) port, pro
 
 ## Compatibility
 
-- Elecraft KX2 (wired ACC/CAT port)
-- Elecraft KX3 (wired ACC/CAT port)
-- Elecraft KH1 (wired ACC/CAT port)
-- QRP Labs QMX — via USB on the ESP32-S3-USB-OTG board
-- Icom IC-705 — via USB on the ESP32-S3-USB-OTG board
+Radio support depends on which SOTAcat hardware you have — the two variants
+connect to radios in physically different ways and support **different radio
+sets**:
+
+| SOTAcat hardware | Connection | Radios |
+|------------------|------------|--------|
+| Classic SOTAcat (ESP32-C3: K5EM / AB6D boards) | Cable to the radio's ACC/CAT jack | Elecraft KX2, KX3, KH1 |
+| ESP32-S3-USB-OTG board | USB cable to the radio's USB port | QRP Labs QMX, Icom IC-705 |
+
+The Elecraft radios have no USB CAT port, so they work only with the classic
+(ACC-jack) SOTAcat; the USB radios are supported only on the S3 board.
 
 ## SOTAmat App (Beta)
 
