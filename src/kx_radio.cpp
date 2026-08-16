@@ -737,7 +737,7 @@ bool KXRadio::put_to_kx_command_string (const char * command, int tries) {
 /**
  * Driver-delegation macros.  Each KXRadio public method below is a thin wrapper
  * that forwards to the corresponding method on the currently-selected driver
- * (m_driver), which is either KXRadioDriver or KH1RadioDriver.
+ * (m_driver): KXRadioDriver, KH1RadioDriver, QMXRadioDriver, or IC705RadioDriver.
  *
  * Three variants are defined:
  *

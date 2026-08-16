@@ -10,7 +10,7 @@ SOTAcat supports multiple radio models through a driver interface. Each radio ha
 
 ### Base Classes
 
-**`RadioDriver`** (`include/radio_driver.h`)
+**`IRadioDriver`** (`include/radio_driver.h`)
 - Abstract base class defining the radio driver interface
 - All radios must implement these methods:
   - `get_frequency()`, `set_frequency()`
@@ -60,8 +60,9 @@ broadcast frames (destination `0x00`) whenever the operator turns the dial, and
 responses can queue behind them. `civ::transact()` therefore drains the port
 until it goes quiet, parses every frame, discards frames not addressed to us,
 and keeps the *last* one matching the expected command — otherwise polled
-frequency falls progressively behind the dial. Transceive is deliberately left
-enabled on the radio (no `0x1A 0x05` settings writes).
+frequency falls progressively behind the dial. The transceive *setting itself*
+is deliberately left alone (no `0x1A 0x05` write to disable it) — CI-V still
+writes other settings, such as the clock (see Time Sync below).
 
 **USB detection:** the IC-705 (VID `0x0C26`, PID `0x0036`) is a composite CDC
 device behind the radio's internal USB hub (which also carries a separate USB
@@ -96,7 +97,7 @@ steady carrier and step the dial for each of the 79 tones. FM mode provides
 the carrier — PTT with no audio transmits an unmodulated carrier at exactly
 the dial frequency, and the VFO retunes cleanly mid-transmit (bench-verified:
 8/8 six-Hz steps while keyed; a full 79-tone transmission completes in the
-canonical 12.68 s with no queue timeouts, and a SOTAmat-initiated
+expected 12.64 s (79 x 160 ms) with no queue timeouts, and a SOTAmat-initiated
 transmission was received and decoded correctly by an independent nearby
 receiver). Each 160 ms tone step is a
 fire-and-forget CI-V `0x05` set-frequency frame; the next frame's input flush
@@ -118,7 +119,7 @@ RF power (sub `0x0A`) is exposed in watts on the REST API assuming the 10 W
 external-supply scale (the CI-V value is percent-of-max, so on battery the
 same percentage yields up to 5 W); UI requests above 10 W cap gracefully,
 matching KX2 behavior. AF volume (sub `0x01`) reports the raw 0-255 level and
-steps ~5% per UI click.
+steps 6 units (~2.4%) per UI click.
 
 **ATU tune** is two-stage. First the native tuner protocol: enable
 (`0x1C 0x01 0x01`) then tune-start (`0x1C 0x01 0x02`), polling status until
@@ -195,8 +196,9 @@ captures or restores radio state. The lifecycle:
 
 1. **Capture**: `prepareft8` snapshots the radio via `get_radio_state()`
    before anything is touched.
-2. **Mutate**: `ft8_prepare()` retunes and switches mode (USB on Elecraft,
-   FM on IC-705); the KX driver additionally forces TUN PWR to 10 W.
+2. **Mutate**: `ft8_prepare()` retunes and switches mode (CW on the KX2/KX3,
+   DIGI on the QMX, FM on the IC-705; the KH1 leaves mode untouched and only
+   zeroes its CW offset); the KX driver additionally forces TUN PWR to 10 W.
 3. **Restore** via `restore_radio_state()` in three places: immediately if
    prepare fails partway; in `cleanup_ft8_task()` after the transmission
    sequence ends; and on `cancelft8`.
@@ -259,8 +261,10 @@ The KH1 speaks a **reduced Elecraft dialect**, not the full KX command set:
   power toggles between LOW/HIGH via `SW2H;` switch emulation
 - FT8: `ft8_prepare()` zeroes the CW offset (`FO00;`) and tunes to
   rfFreq + audioFreq; the carrier is keyed with `HK1;`/`HK0;` (key-line
-  emulation) instead of the KX's `SWH16;` TUNE toggle; tones step `FA`
-  like the KX; `ft8_tone_off()` restores the offset (`FO99;`)
+  emulation) instead of the KX's `SWH16;` TUNE toggle; tones do **not**
+  rewrite `FA` — `ft8_set_tone()` steps the CW offset instead
+  (`FOnn;`, computed as the tone's offset from rfFreq modulo 100);
+  `ft8_tone_off()` restores the offset (`FO99;`)
 
 #### QMX Radio Driver
 
@@ -315,29 +319,37 @@ The QMX requires special handling per its CAT manual. Key differences:
 - **Shaped Envelopes:** Using `TA0;` for key-up instead of hard `RX;` produces a proper Blackman-Harris shaped RF envelope, which is better for FT8 than an instant hard key-off
 - **Mode Persistence:** After FT8, radio remains in DIGI mode (MD6) until explicitly changed back
 
-**Implementation Details:**
+**Implementation Details** (`src/radio_driver_qmx.cpp`):
 
 ```cpp
-bool QMXRadioDriver::ft8_prepare(KXRadio & radio, long base_freq) {
-    // Set USB dial frequency
-    radio.put_to_kx("FA", 11, base_freq, SC_KX_COMMUNICATION_RETRIES);
-    
-    // Set DIGI mode (MD6) — required for TA command
-    radio.put_to_kx("MD", 1, 6, SC_KX_COMMUNICATION_RETRIES);
+bool QMXRadioDriver::ft8_prepare(KXRadio & radio, long rfFreq, int audioFreq) {
+    // QMX does not allow frequency changes while in DIGI mode, so set
+    // frequency FIRST (while in the current mode), then switch to DIGI.
+    m_ft8_rf_freq = rfFreq;
+    m_ft8_audio_freq = audioFreq;
+    if (!radio.put_to_kx("FA", 11, rfFreq, SC_KX_COMMUNICATION_RETRIES))
+        return false;
+    // The TA command only works in DIGI mode per the QMX CAT manual.
+    if (!radio.put_to_kx("MD", 1, 6, SC_KX_COMMUNICATION_RETRIES))
+        return false;
+    vTaskDelay(pdMS_TO_TICKS(100));  // let the radio settle in DIGI mode
+    return true;
 }
 
 void QMXRadioDriver::ft8_tone_off(KXRadio & radio) {
-    uart_write_bytes(UART_NUM, "TA0;", sizeof("TA0;") - 1);  // Shaped key-up
-    uart_flush(UART_NUM);
-    vTaskDelay(pdMS_TO_TICKS(5));     // Wait for envelope
-    uart_write_bytes(UART_NUM, "RX;", sizeof("RX;") - 1);    // Return to RX
-    uart_flush(UART_NUM);
+    radio.cat_write_bytes((const uint8_t *)"TA0;", 4);  // shaped key-up
+    radio.cat_flush_input();
+    vTaskDelay(pdMS_TO_TICKS(5));                        // envelope settle
+    radio.cat_write_bytes((const uint8_t *)"RX;", 3);    // return to RX
+    radio.cat_flush_input();
 }
 ```
 
-**CAT Command Timing:**
-- Direct UART writes are used for TA, TX, RX commands (bypasses CAT interface delays for precision)
-- MD mode commands use CAT interface with verification for reliability
+**CAT Command Timing:** `ft8_tone_on`/`ft8_tone_off`/`ft8_set_tone` use
+`KXRadio::cat_write_bytes()` — the transport-agnostic byte path (UART on the
+C3, USB CDC on the S3) — rather than the ASCII command primitives, to keep
+precise 160 ms/tone FT8 timing. `ft8_prepare`'s one-time `FA`/`MD` setup uses
+the verified/retried ASCII primitives instead, since it isn't timing-critical.
 
 **Future work (QMX)** — both verified feasible on real hardware (QMX
 firmware 1.04.005, bench 2026-08-10):

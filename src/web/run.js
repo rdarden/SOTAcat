@@ -66,8 +66,10 @@ function setPowerMinMax(maximum) {
 // Volume Control Functions
 // ============================================================================
 
-// Adjust volume (AF gain) by delta amount (delta: positive or negative integer)
-// Backend scales each delta unit to 5 display units on the radio's 0-60 AF scale
+// Adjust volume (AF gain) by delta amount (delta: positive or negative integer).
+// Each driver scales one delta unit to its own native step and scale: KX2/KX3
+// 5 units on 0-60, KH1 3 encoder taps (ENAU;/ENAD;) on its own display scale,
+// QMX 8 units on 0-255, IC-705 6 units on 0-255. See each radio_driver_*.cpp.
 function changeVolume(delta) {
     const url = `/api/v1/volume?delta=${delta}`;
     fetchQuiet(url, { method: "PUT" }, "Spot");
@@ -749,7 +751,13 @@ function updateButtonPrivileges() {
     const dataOk = isPermitted(dataStatus);
 
     // Mode buttons
-    const ids = { "btn-cw": cwOk, "btn-ssb": phoneOk, "btn-am": phoneOk, "btn-fm": phoneOk && !radioLacksFeature("fm"), "btn-data": dataOk };
+    const ids = {
+        "btn-cw": cwOk,
+        "btn-ssb": phoneOk,
+        "btn-am": phoneOk && !radioLacksFeature("am"),
+        "btn-fm": phoneOk && !radioLacksFeature("fm"),
+        "btn-data": dataOk,
+    };
     for (const [id, ok] of Object.entries(ids)) {
         const btn = document.getElementById(id);
         if (btn) btn.disabled = !ok;
@@ -767,12 +775,17 @@ function updateButtonPrivileges() {
 
 // UI features each radio's CAT driver does NOT support. Radios not listed
 // (KX2/KX3/KH1, Unknown) support everything their mode buttons allow.
-// TODO(QMX): recent firmware adds AM mode but ships with it menu-disabled;
-// detect at connect time whether it's enabled and gate the AM button like FM.
+// TODO(QMX): recent firmware adds AM mode, normally offered only when enabled
+// in the menu -- but CAT's MD5 is accepted regardless of that menu setting
+// (bench-verified), and once the radio is in AM, EVERY subsequent MD command
+// errors until an MU (reload config) is sent, which QMXRadioDriver::set_mode
+// does not do. Gated here (like FM, which the QMX genuinely lacks) until the
+// driver either detects real AM support or implements the MU-recovery dance.
 const RADIO_UNSUPPORTED_FEATURES = {
-    "QMX": { power: true, atu: true, fm: true },
-    // IC705: full support (ATU tune drives an external tuner like the AH-705;
-    // the radio rejects the command if none is connected).
+    "QMX": { power: true, atu: true, fm: true, am: true },
+    // IC705: full support (ATU tune tries the native tuner protocol first,
+    // e.g. an AH-705/mAT-705/T1; if none responds it falls back to keying a
+    // brief low-power carrier for RF-sensing tuners instead of failing).
 };
 
 // What each radio's own message banks (PUT /api/v1/msg) can play:
@@ -805,12 +818,17 @@ function updateRadioSpecificButtonStates() {
     const minPowerBtn = document.getElementById("min-power-button");
     const maxPowerBtn = document.getElementById("max-power-button");
     const tuneAtuBtn = document.getElementById("tune-atu-button");
-    const fmBtn = document.getElementById("btn-fm");
 
     if (minPowerBtn) minPowerBtn.disabled = radioLacksFeature("power");
     if (maxPowerBtn) maxPowerBtn.disabled = radioLacksFeature("power");
     if (tuneAtuBtn) tuneAtuBtn.disabled = radioLacksFeature("atu");
-    if (fmBtn) fmBtn.disabled = radioLacksFeature("fm");
+    // btn-fm is intentionally NOT set here: updateButtonPrivileges() already
+    // factors radioLacksFeature("fm") into its privilege-based disabled state
+    // (phoneOk && !radioLacksFeature("fm")). Setting it again here, using
+    // radio-capability alone, previously clobbered that privilege check
+    // whenever this function ran after updateButtonPrivileges() (as it does
+    // in updatePrivilegeDisplay()) -- re-enabling FM for users without phone
+    // privileges on every VFO poll.
 }
 
 // ============================================================================
@@ -986,9 +1004,11 @@ async function setMode(mode) {
 
     let actualMode = mode;
 
-    // Handle SSB mode selection based on frequency
+    // Handle SSB mode selection based on frequency (band-aware: see sidebandForBand)
     if (mode === "SSB") {
-        actualMode = (AppState.vfoFrequencyHz || DEFAULT_FREQUENCY_HZ) < LSB_USB_BOUNDARY_HZ ? "LSB" : "USB";
+        const freq = AppState.vfoFrequencyHz || DEFAULT_FREQUENCY_HZ;
+        const band = getBandFromFrequency(freq);
+        actualMode = band ? sidebandForBand(band) : (freq < LSB_USB_BOUNDARY_HZ ? "LSB" : "USB");
     }
 
     const url = `/api/v1/mode?mode=${actualMode}`;
@@ -1019,7 +1039,7 @@ async function setMode(mode) {
 // above — except 60m, where USB is required (FCC rule for the 5 MHz channels)
 // despite being below 10 MHz.
 function sidebandForBand(band) {
-    return band !== "60m" && BAND_PLAN[band].min < 10000000 ? "LSB" : "USB";
+    return band !== "60m" && BAND_PLAN[band].min < LSB_USB_BOUNDARY_HZ ? "LSB" : "USB";
 }
 
 // Select band and set appropriate frequency and mode (band: '40m', '20m', '17m', '15m', '12m', '10m')

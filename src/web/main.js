@@ -94,7 +94,7 @@ const AppState = {
     licenseClass: null,  // null = not loaded, "" = loaded but not set
 
     // Radio info
-    radioType: null,           // "KX2", "KX3", or "Unknown"
+    radioType: null,           // "KX2", "KX3", "KH1", "QMX", "IC705", or "Unknown"
     filterBandsEnabled: true,  // Filter chase spots to radio-supported bands
 
     // UI density

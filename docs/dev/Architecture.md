@@ -57,7 +57,7 @@ not a CDC-ACM device, so it would need an additional host driver).
 - No audio path: the RF carrier itself is keyed and stepped via CAT, one command per FT8 tone
 - The carrier/keying technique is per-radio (details in [Radio-Drivers.md](Radio-Drivers.md)):
   - **KX2/KX3** — CW mode (MD3), carrier keyed via `SWH16;` (hold-XMIT = TUNE), tones by rewriting `FA`; transmits at a fixed 10 W TUN PWR
-  - **KH1** — CW offset zeroed (`FO00;`), carrier keyed via `HK1;`/`HK0;`, tones by rewriting `FA`
+  - **KH1** — CW offset zeroed (`FO00;`), carrier keyed via `HK1;`/`HK0;`, tones by stepping the CW offset (`FOnn;`)
   - **QMX** — DIGI mode (MD6), carrier and tones via `TA`; the QMX firmware shapes key-up/key-down with a Blackman-Harris RF envelope
   - **IC-705** — FM mode + PTT for a clean carrier, tones via CI-V set-frequency; transmits at the operator's RF POWER setting
 - Note the deliberate power-policy split: Elecraft FT8 forces 10 W (TUNE carrier power), while the IC-705 honors whatever power the operator has set

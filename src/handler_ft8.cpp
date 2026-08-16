@@ -499,11 +499,13 @@ static void xmit_ft8_task (void * pvParameter) {
     return;
 
 cleanup:
-    // CRITICAL: Exit MD8 mode even if transmission didn't start
-    // If ft8_prepare() was called but transmission was cancelled before tone_on,
-    // we MUST call tone_off to exit MD8 mode and return radio to normal CAT mode
+    // CRITICAL: leave the radio in a clean RX state even if transmission
+    // never started. If ft8_prepare() ran (mode changed, carrier armed on
+    // some drivers) but the sequence was cancelled before tone_on, we MUST
+    // call tone_off to key up / return to RX -- otherwise the radio can be
+    // left transmitting a carrier or stuck in the FT8-prepared mode.
     if (ft8_tone_active || Ft8RadioExclusive) {
-        ESP_LOGI (TAG8, "FT8 cleanup: Exiting MD8 mode via ft8_tone_off");
+        ESP_LOGI (TAG8, "FT8 cleanup: returning to RX via ft8_tone_off");
         kxRadio.ft8_tone_off();
     }
     

@@ -17,13 +17,18 @@ function parseVersionString(versionStr) {
     if (!match) return null;
     const [, hwPart, yyMMdd, hhMM, typeCode] = match;
 
-    // Hardware: "K5EM_1" -> "K5EM version 1"
+    // Hardware: "K5EM_1" -> "K5EM version 1". Only PCB variants (C3 boards)
+    // follow the {NAME}_{single-digit version} convention; dev-board strings
+    // like "ESP32_S3_USB_OTG" don't have a trailing version number and are
+    // shown as-is rather than mis-split on their last underscore.
     let hardware = hwPart;
     const underscoreIdx = hwPart.lastIndexOf("_");
     if (underscoreIdx > 0) {
         const name = hwPart.slice(0, underscoreIdx);
         const ver = hwPart.slice(underscoreIdx + 1);
-        hardware = `${name} version ${ver}`;
+        if (/^\d+$/.test(ver)) {
+            hardware = `${name} version ${ver}`;
+        }
     }
 
     // Date: "260201" (YYMMDD) -> "2026-02-01"

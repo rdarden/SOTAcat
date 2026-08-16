@@ -597,6 +597,7 @@ describe('getKeyerFamily', () => {
 
     const pieces = [
         ["BAND_PLAN", mainJs.match(/const BAND_PLAN = \{[\s\S]*?\n\};/)],
+        ["LSB_USB_BOUNDARY_HZ", mainJs.match(/const LSB_USB_BOUNDARY_HZ = [^;]+;/)],
         ["getModeCategory", privJs.match(/function getModeCategory\([\s\S]*?\n\}/)],
         ["RADIO_UNSUPPORTED_FEATURES", runJs.match(/const RADIO_UNSUPPORTED_FEATURES = \{[\s\S]*?\n\};/)],
         ["RADIO_MSG_BANKS", runJs.match(/const RADIO_MSG_BANKS = \{[\s\S]*?\n\};/)],
@@ -616,17 +617,19 @@ describe('getKeyerFamily', () => {
     const call = (fn, ...args) => vmx.runInContext(`${fn}(${args.map(JSON.stringify).join(",")})`, sandbox);
 
     describe("radioLacksFeature (per-radio unsupported features)", () => {
-        it("QMX lacks power, atu, and fm", () => {
+        it("QMX lacks power, atu, fm, and am", () => {
             setRadio("QMX");
             assertTrue(call("radioLacksFeature", "power"));
             assertTrue(call("radioLacksFeature", "atu"));
             assertTrue(call("radioLacksFeature", "fm"));
+            assertTrue(call("radioLacksFeature", "am"));
         });
         it("IC705 lacks nothing (full driver support)", () => {
             setRadio("IC705");
             assertFalse(call("radioLacksFeature", "power"));
             assertFalse(call("radioLacksFeature", "atu"));
             assertFalse(call("radioLacksFeature", "fm"));
+            assertFalse(call("radioLacksFeature", "am"));
         });
         it("Unlisted radios (KX2, Unknown) lack nothing", () => {
             setRadio("KX2");
