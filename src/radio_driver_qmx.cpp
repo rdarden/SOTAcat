@@ -213,6 +213,16 @@ bool QMXRadioDriver::send_keyer_message (KXRadio & radio, const char * message) 
             }
             if (state < 0)
                 wait_for_qmx_tx_end (radio, 60000);
+            else if (state == 1) {
+                // Buffer still reports >75% full after the full grace period
+                // -- something is stuck (hung firmware, wedged transport).
+                // Sending the next chunk anyway risks the QMX silently
+                // ignoring it (per the CAT manual, an over-full KY send is
+                // just dropped with "?;"), truncating the message with no
+                // trace. Fail loudly instead.
+                ESP_LOGW (TAG8, "QMX keyer: KY buffer still full after 30s wait, aborting send");
+                return false;
+            }
         }
         size_t chunk_len = next_qmx_ky_chunk_len (pos, end, first ? FIRST_CHUNK_MAX : NEXT_CHUNK_MAX);
         if (chunk_len == 0)

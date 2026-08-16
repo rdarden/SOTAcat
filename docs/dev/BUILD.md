@@ -81,6 +81,17 @@ pio run --target upload
 > one-time serial reflash); the debug build is also at ~81% of the current
 > 1.5 MB app slot, so a larger layout is needed soon regardless.
 
+> **Note / TODO:** `setup()`'s 60-second startup watchdog (`src/setup.cpp`,
+> `startup_watchdog_timer`) deep-sleeps the board if initialization hasn't
+> completed and the battery isn't charging. On the S3, `KXRadio::connect()`
+> waits *indefinitely* for a USB radio to be plugged in and powered on (see
+> Radio-Drivers.md) -- so a battery-powered S3 board left waiting for the
+> user to power on a QMX/IC-705 will auto-deep-sleep at 60s, same as if it
+> had genuinely failed to initialize. This matches the watchdog's original
+> intent (don't drain the battery of an unattended, uninitialized unit) and
+> hasn't been reported as a problem, but it's worth revisiting if the S3's
+> long-wait use case turns out to make 60s too aggressive in practice.
+
 ## Common Issues
 
 **"x509_crt_bundle not found" or "file failed to open for reading: x509_crt_bundle"**

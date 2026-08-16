@@ -55,11 +55,15 @@ struct FrameMatch {
 // Consumes every complete "FE FE ... FD" frame currently in acc[0..fill),
 // compacting the unconsumed tail to the front and updating fill. Frames not
 // addressed to CTRL_ADDR (transceive broadcasts, echoes) are discarded; of the
-// frames addressed to us, the LAST one satisfying `want` is copied to
-// frame_out (body only: <to> <from> <cmd> [data...]). If the buffer fills to
-// `cap` without a terminator, the garbage is discarded. Returns true if at
-// least one matching frame was found in this call.
-bool scan_frames (uint8_t * acc, size_t & fill, size_t cap, const FrameMatch & want, uint8_t * frame_out, size_t & frame_len_out);
+// frames addressed to us, the LAST one satisfying `want` AND fitting within
+// frame_out_cap is copied to frame_out (body only: <to> <from> <cmd>
+// [data...]). An oversized matching frame (noise, or a reply larger than any
+// command we send) is skipped rather than copied, so callers with a
+// MAX_FRAME-sized frame_out are safe regardless of what the accumulator
+// holds. If the buffer fills to `cap` without a terminator, the garbage is
+// discarded. Returns true if at least one matching, in-bounds frame was
+// found in this call.
+bool scan_frames (uint8_t * acc, size_t & fill, size_t cap, const FrameMatch & want, uint8_t * frame_out, size_t frame_out_cap, size_t & frame_len_out);
 
 // Fire-and-forget: flush pending input and send one frame. Returns true if the
 // frame was built and written.

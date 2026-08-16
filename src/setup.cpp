@@ -108,11 +108,9 @@ void setup () {
     // Note the current time since our inactivity power down time will be based on this.
     std::time (&LastUserActivityUnixTime);
     // Start a watchdog timer to shut the unit down if we aren't able to fully initialize within 60 seconds.
-    // DISABLED FOR TESTING: Commenting out watchdog to prevent deep sleep during UART diagnostics
-    // TaskHandle_t xSetupWatchdogHandle = NULL;
-    // xTaskCreate (&startup_watchdog_timer, "startup_watchdog_task", 2048, NULL, SC_TASK_PRIORITY_NORMAL, &xSetupWatchdogHandle);
-    // ESP_LOGI (TAG8, "shutdown watchdog started.");
-    ESP_LOGI (TAG8, "shutdown watchdog disabled for testing.");
+    TaskHandle_t xSetupWatchdogHandle = NULL;
+    xTaskCreate (&startup_watchdog_timer, "startup_watchdog_task", 2048, NULL, SC_TASK_PRIORITY_NORMAL, &xSetupWatchdogHandle);
+    ESP_LOGI (TAG8, "shutdown watchdog started.");
 
     // Initialize and restore settings
     init_settings();
@@ -175,9 +173,7 @@ void setup () {
     gpio_set_level (LED_BLUE, LED_OFF);
 
     // Cancel the startup watchdog timer task
-    // DISABLED FOR TESTING: Watchdog task no longer created
-    // vTaskDelete (xSetupWatchdogHandle);
-    ESP_LOGI (TAG8, "setup watchdog was disabled for testing.");
+    vTaskDelete (xSetupWatchdogHandle);
 
     // Setup quiescent LED flashing timer
     xTaskCreate (&idle_status_task, "sleep_status_task", 2048, NULL, SC_TASK_PRIORITY_IDLE, &xInactivityWatchdogHandle);

@@ -25,7 +25,7 @@ size_t build_frame (uint8_t * out, size_t cap, const uint8_t * cmd_and_data, siz
     return frame_len;
 }
 
-bool scan_frames (uint8_t * acc, size_t & fill, size_t cap, const FrameMatch & want, uint8_t * frame_out, size_t & frame_len_out) {
+bool scan_frames (uint8_t * acc, size_t & fill, size_t cap, const FrameMatch & want, uint8_t * frame_out, size_t frame_out_cap, size_t & frame_len_out) {
     bool   have_match = false;
     size_t scan       = 0;
 
@@ -56,11 +56,13 @@ bool scan_frames (uint8_t * acc, size_t & fill, size_t cap, const FrameMatch & w
             else if (cmd == want.expect_cmd)
                 matches = (want.expect_sub < 0) ||
                           (body_len >= 4 && acc[body + 3] == (uint8_t)want.expect_sub);
-            if (matches) {
+            if (matches && body_len <= frame_out_cap) {
                 frame_len_out = body_len;
                 memcpy (frame_out, acc + body, body_len);
                 have_match = true;
             }
+            // else: matches but too large for frame_out -- skip rather than
+            // overflow the caller's buffer (see header comment).
         }
         // else: broadcast/echo/other destination -- discard silently
 

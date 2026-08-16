@@ -504,9 +504,24 @@ cleanup:
     // some drivers) but the sequence was cancelled before tone_on, we MUST
     // call tone_off to key up / return to RX -- otherwise the radio can be
     // left transmitting a carrier or stuck in the FT8-prepared mode.
+    //
+    // This label is reached AFTER the function-opening TimedLock's scope has
+    // closed (its destructor already ran), including from the very first
+    // "failed to acquire lock" goto -- so a fresh lock must be acquired here
+    // rather than assuming the original one is still held. Best-effort with a
+    // short timeout: cleanup_ft8_task's own retry loop is the authoritative
+    // backstop that restores full radio state regardless of whether this
+    // immediate key-up succeeds.
     if (ft8_tone_active || Ft8RadioExclusive) {
-        ESP_LOGI (TAG8, "FT8 cleanup: returning to RX via ft8_tone_off");
-        kxRadio.ft8_tone_off();
+        TimedLock cleanup_lock = kxRadio.timed_lock (RADIO_LOCK_TIMEOUT_QUICK_MS, "FT8 xmit cleanup");
+        if (cleanup_lock.acquired()) {
+            ESP_LOGI (TAG8, "FT8 cleanup: returning to RX via ft8_tone_off");
+            kxRadio.ft8_tone_off();
+        }
+        else {
+            ESP_LOGW (TAG8, "FT8 cleanup: radio busy, skipping immediate tone_off "
+                             "(cleanup_ft8_task will still restore radio state)");
+        }
     }
     
     ft8_set_task_in_progress (false);

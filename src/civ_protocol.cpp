@@ -41,7 +41,7 @@ bool send (KXRadio & radio, const uint8_t * cmd_and_data, size_t n) {
 // usb_serial_host_read_blocking() call truncates data that exceeds the
 // caller's buffer (see usb_serial_host.cpp), so read into a roomy buffer
 // rather than frame-sized pieces.
-static bool drain_for_match (KXRadio & radio, const FrameMatch & want, uint8_t * frame_out, size_t & frame_len_out, int timeout_ms) {
+static bool drain_for_match (KXRadio & radio, const FrameMatch & want, uint8_t * frame_out, size_t frame_out_cap, size_t & frame_len_out, int timeout_ms) {
     uint8_t acc[256];
     size_t  fill       = 0;
     bool    have_match = false;
@@ -53,7 +53,7 @@ static bool drain_for_match (KXRadio & radio, const FrameMatch & want, uint8_t *
         if (got > 0)
             fill += (size_t)got;
 
-        if (scan_frames (acc, fill, sizeof (acc), want, frame_out, frame_len_out))
+        if (scan_frames (acc, fill, sizeof (acc), want, frame_out, frame_out_cap, frame_len_out))
             have_match = true;
 
         if (have_match && got <= 0)
@@ -71,7 +71,7 @@ bool transact (KXRadio & radio, const uint8_t * cmd_and_data, size_t n, uint8_t 
     FrameMatch want = { expect_cmd, expect_sub, false };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    if (!drain_for_match (radio, want, frame, frame_len, timeout_ms)) {
+    if (!drain_for_match (radio, want, frame, sizeof (frame), frame_len, timeout_ms)) {
         ESP_LOGD (TAG8, "CI-V no response to cmd 0x%02x within %d ms", expect_cmd, timeout_ms);
         return false;
     }
@@ -93,7 +93,7 @@ bool send_expect_ack (KXRadio & radio, const uint8_t * cmd_and_data, size_t n, i
     FrameMatch want = { 0, -1, true };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    if (!drain_for_match (radio, want, frame, frame_len, timeout_ms)) {
+    if (!drain_for_match (radio, want, frame, sizeof (frame), frame_len, timeout_ms)) {
         ESP_LOGD (TAG8, "CI-V no ACK/NAK for cmd 0x%02x within %d ms", cmd_and_data[0], timeout_ms);
         return false;
     }

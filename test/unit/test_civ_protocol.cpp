@@ -66,7 +66,7 @@ static void test_scan_basic_match_and_payload () {
     FrameMatch want = { 0x03, -1, false };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (fill == 0);  // fully consumed
     assert (frame_len == 2 + sizeof (body));
     assert (frame[0] == CTRL_ADDR && frame[1] == RADIO_ADDR && frame[2] == 0x03);
@@ -90,7 +90,7 @@ static void test_scan_discards_broadcasts_and_keeps_last () {
     FrameMatch want = { 0x03, -1, false };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (bcd_le_to_hz (frame + 3, 5) == 14060052);  // the LAST reply won
 }
 
@@ -105,12 +105,12 @@ static void test_scan_subcommand_matching () {
     FrameMatch want = { 0x1A, 0x06, false };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (frame[3] == 0x06);
 
     // Sub-command mismatch alone must not match.
     fill = put_frame (acc, 0, CTRL_ADDR, RADIO_ADDR, wrong_sub, sizeof (wrong_sub));
-    assert (!scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (!scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
 }
 
 static void test_scan_ack_nak () {
@@ -122,12 +122,12 @@ static void test_scan_ack_nak () {
     FrameMatch want = { 0, -1, true };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (frame[2] == ACK);
 
     const uint8_t nak_body[] = { NAK };
     fill = put_frame (acc, 0, CTRL_ADDR, RADIO_ADDR, nak_body, sizeof (nak_body));
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (frame[2] == NAK);  // NAK matches too; caller distinguishes
 }
 
@@ -146,12 +146,12 @@ static void test_scan_partial_frames_across_reads () {
     FrameMatch want = { 0x04, -1, false };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    assert (!scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (!scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (fill == split);  // partial frame retained
 
     memcpy (acc + fill, whole + split, whole_len - split);
     fill += whole_len - split;
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (frame[2] == 0x04 && frame[3] == 0x03);
 }
 
@@ -175,7 +175,7 @@ static void test_scan_garbage_and_preamble_runs () {
     FrameMatch want = { 0x03, -1, false };
     uint8_t    frame[MAX_FRAME];
     size_t     frame_len = 0;
-    assert (scan_frames (acc, fill, sizeof (acc), want, frame, frame_len));
+    assert (scan_frames (acc, fill, sizeof (acc), want, frame, sizeof (frame), frame_len));
     assert (frame_len == 3);
     assert (fill == 0);
 }
@@ -190,7 +190,7 @@ static void test_scan_overflow_resets () {
     uint8_t small[32];
     memset (small, 0x55, sizeof (small));
     size_t fill = sizeof (small);
-    assert (!scan_frames (small, fill, sizeof (small), want, frame, frame_len));
+    assert (!scan_frames (small, fill, sizeof (small), want, frame, sizeof (frame), frame_len));
     assert (fill <= 1);
 
     // An unterminated frame that fills the whole buffer is unrecoverable:
@@ -199,8 +199,35 @@ static void test_scan_overflow_resets () {
     small[1] = PREAMBLE;
     memset (small + 2, 0x55, sizeof (small) - 2);  // frame body, never a terminator
     fill = sizeof (small);
-    assert (!scan_frames (small, fill, sizeof (small), want, frame, frame_len));
+    assert (!scan_frames (small, fill, sizeof (small), want, frame, sizeof (frame), frame_len));
     assert (fill == 0);
+}
+
+// A matching frame larger than frame_out must be skipped, not copied --
+// regression test for a stack-buffer-overflow risk in scan_frames() (an
+// unbounded memcpy into a caller-sized frame_out). Uses a canary immediately
+// after a small frame_out to prove nothing was written past it.
+static void test_scan_skips_frame_too_large_for_output () {
+    uint8_t acc[256];
+    size_t  fill = 0;
+    // Body of 10 bytes (cmd + 7 data bytes) matching want.expect_cmd, but
+    // frame_out below only has room for 5.
+    const uint8_t body[] = { 0x03, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77 };
+    fill = put_frame (acc, fill, CTRL_ADDR, RADIO_ADDR, body, sizeof (body));
+
+    FrameMatch want = { 0x03, -1, false };
+    struct {
+        uint8_t frame_out[5];
+        uint8_t canary[4];
+    } buf;
+    memset (buf.frame_out, 0xAA, sizeof (buf.frame_out));
+    memset (buf.canary, 0x5A, sizeof (buf.canary));
+    size_t frame_len = 0;
+
+    assert (!scan_frames (acc, fill, sizeof (acc), want, buf.frame_out, sizeof (buf.frame_out), frame_len));
+    assert (fill == 0);  // still fully consumed, just not copied out
+    for (size_t i = 0; i < sizeof (buf.canary); i++)
+        assert (buf.canary[i] == 0x5A);  // untouched -- no overflow
 }
 
 int main () {
@@ -213,5 +240,6 @@ int main () {
     test_scan_partial_frames_across_reads();
     test_scan_garbage_and_preamble_runs();
     test_scan_overflow_resets();
+    test_scan_skips_frame_too_large_for_output();
     return 0;
 }

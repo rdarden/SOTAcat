@@ -184,6 +184,12 @@ static bool                   g_display_ready = false;
 // row's draw while a previous transfer was still reading from it -- e.g. a hub
 // and its downstream devices attaching within milliseconds of each other and
 // each updating a different row. Separate per-row buffers avoid that entirely.
+// Known limitation: this does NOT protect against two rapid updates to the
+// SAME row -- the mutex below only serializes buffer writes, not DMA
+// completion, so a second same-row update can in principle start overwriting
+// the buffer while an earlier transfer is still reading it. Worst case is a
+// torn frame on that row that self-corrects on the next update; status text
+// changes at human/poll speed, so this hasn't been observed in practice.
 #define MAX_DISPLAY_ROWS 10  // rows 0-7: USB/CAT/VFO status; row 8: WiFi SSID; row 9: IP address
 static uint16_t g_row_buf[MAX_DISPLAY_ROWS][LCD_H_RES * CHAR_H];
 static SemaphoreHandle_t g_row_buf_mutex = NULL;

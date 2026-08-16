@@ -87,6 +87,8 @@ static bool usb_cdc_rx_callback (const uint8_t * data, size_t data_len, void * u
 
     usb_rx_packet_t packet;
     packet.len = (data_len < USB_RX_BUFFER_SIZE) ? data_len : USB_RX_BUFFER_SIZE;
+    if (data_len > USB_RX_BUFFER_SIZE)
+        ESP_LOGW (TAG8, "USB RX packet %d bytes exceeds %d-byte buffer, truncating", (int)data_len, USB_RX_BUFFER_SIZE);
     memcpy (packet.data, data, packet.len);
 
     if (xQueueSend (g_usb_rx_queue, &packet, 0) != pdTRUE)

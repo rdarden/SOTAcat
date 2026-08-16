@@ -350,10 +350,13 @@ void KH1RadioDriver::ft8_tone_off (KXRadio & radio) {
 
 void KH1RadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) {
     (void)radio;
-    (void)audioFreq;
-    
+
+    // ft8_prepare() tunes the dial to rfFreq + audioFreq and zeroes the CW
+    // offset (FO00;); each tone must be expressed as an offset from THAT
+    // tuned frequency, not from rfFreq alone, or every tone is mis-keyed by
+    // audioFreq Hz (masked only when audioFreq happens to be a multiple of 100).
     char     command[8];
-    unsigned offset = static_cast<unsigned> ((frequency - rfFreq) % 100);
+    unsigned offset = static_cast<unsigned> ((frequency - rfFreq - audioFreq) % 100);
     snprintf (command, sizeof (command), "FO%02u;", offset);
     uart_write_bytes (UART_NUM, command, 5);
 }
