@@ -59,7 +59,7 @@ not a CDC-ACM device, so it would need an additional host driver).
   - **KX2/KX3** — CW mode (MD3), carrier keyed via `SWH16;` (hold-XMIT = TUNE), tones by rewriting `FA`; transmits at a fixed 10 W TUN PWR
   - **KH1** — CW offset zeroed (`FO00;`), carrier keyed via `HK1;`/`HK0;`, tones by stepping the CW offset (`FOnn;`)
   - **QMX** — DIGI mode (MD6), carrier and tones via `TA`; the QMX firmware shapes key-up/key-down with a Blackman-Harris RF envelope
-  - **IC-705** — FM mode + PTT for a clean carrier, tones via CI-V set-frequency; transmits at the operator's RF POWER setting
+  - **IC-705** — CW mode + PTT for a clean carrier (CW has no audio-modulation path, unlike FM, so mic pickup can't contaminate it — needs bench re-verification, see Radio-Drivers.md), tones via CI-V set-frequency; transmits at the operator's RF POWER setting
 - Note the deliberate power-policy split: Elecraft FT8 forces 10 W (TUNE carrier power), while the IC-705 honors whatever power the operator has set
 - Computes and transmits the 79-symbol (~12.6 s) FT8 sequence within its 15-second slot
 - API: `/api/v1/prepareft8`, `/api/v1/ft8`, `/api/v1/cancelft8`

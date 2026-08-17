@@ -513,25 +513,45 @@ bool IC705RadioDriver::restore_radio_state (KXRadio & radio, const kx_state_t * 
  * FT8: the IC-705 has no CAT command for audio tone generation (the QMX's TA
  * command has no CI-V equivalent), so FSK is synthesized the way the KX driver
  * does it -- transmit a steady carrier and step the dial frequency for each of
- * the 79 tones. FM mode provides that carrier: PTT with no audio transmits an
- * unmodulated carrier at exactly the displayed frequency, and bench testing
- * confirmed the VFO retunes cleanly mid-transmit in FM. Each 160 ms tone step
- * is a fire-and-forget CI-V set-frequency frame (no ACK wait -- the next
- * send()'s input flush clears accumulated ACKs), keeping per-tone latency to
- * the frame transmission time.
+ * the 79 tones. CW mode provides that carrier: CW has no audio-modulation
+ * path in the transmitter at all (unlike FM), so a PTT-held carrier in CW
+ * mode cannot be contaminated by the mic (open mic gain, wind, the operator
+ * talking nearby) the way an FM carrier structurally could be. Each 160 ms
+ * tone step is a fire-and-forget CI-V set-frequency frame (no ACK wait -- the
+ * next send()'s input flush clears accumulated ACKs), keeping per-tone
+ * latency to the frame transmission time.
+ *
+ * History: this originally used FM mode (PTT with no audio *should* be an
+ * unmodulated carrier, and bench testing with a quiet room and an independent
+ * receiver did decode cleanly). But that only rules out modulation in the
+ * specific conditions tested -- it does not rule out an open/live mic picking
+ * up field conditions (wind, the operator talking) during a real SOTA
+ * activation and smearing the carrier. CW mode removes the entire class of
+ * risk structurally rather than relying on "quiet enough during the test."
+ *
+ * NEEDS BENCH VERIFICATION (not yet re-tested against real hardware since
+ * this switch from FM): confirm PTT-held CW mode with no keyer/key-line
+ * activity produces a steady, unmodulated carrier exactly at the displayed
+ * frequency (no CW-pitch/sidetone offset applied to actual TX frequency -- if
+ * the radio pitch-shifts CW TX by its sidetone setting, every tone would need
+ * a compensating offset); confirm the VFO still retunes cleanly mid-keydown
+ * in CW mode the way it did in FM; and specifically retest with deliberate
+ * ambient noise/talking near the mic during TX to confirm decode is
+ * unaffected (a comparison FM-mode run under the same conditions would
+ * confirm whether the original contamination concern was real).
  *
  * Power policy (deliberate): FT8 transmits at whatever RF POWER the operator
  * has set; this driver never adjusts it. The KX driver's forcing of TUN PWR
  * is an Elecraft-specific mechanical need (its TUNE carrier has a separate
- * power setting); the IC-705's FM carrier uses the normal RF POWER control,
- * so the operator's choice stands. (CI-V 0x14 0x0A is the hook if
- * programmatic power control is ever wanted.)
+ * power setting); the IC-705's carrier uses the normal RF POWER control, so
+ * the operator's choice stands. (CI-V 0x14 0x0A is the hook if programmatic
+ * power control is ever wanted.)
  */
 bool IC705RadioDriver::ft8_prepare (KXRadio & radio, long rfFreq, int audioFreq) {
     long base = rfFreq + audioFreq;
     ESP_LOGI (TAG8, "IC-705 FT8 prepare: rf=%ld audio=%d -> carrier base %ld", rfFreq, audioFreq, base);
-    if (!set_mode (radio, MODE_FM, SC_KX_COMMUNICATION_RETRIES)) {
-        ESP_LOGE (TAG8, "FT8 prepare: failed to set FM mode");
+    if (!set_mode (radio, MODE_CW, SC_KX_COMMUNICATION_RETRIES)) {
+        ESP_LOGE (TAG8, "FT8 prepare: failed to set CW mode");
         return false;
     }
     if (!set_frequency (radio, base, SC_KX_COMMUNICATION_RETRIES)) {
@@ -553,8 +573,9 @@ void IC705RadioDriver::ft8_tone_off (KXRadio & radio) {
 }
 
 void IC705RadioDriver::ft8_set_tone (KXRadio & radio, long rfFreq, int audioFreq, long frequency) {
-    // `frequency` is the absolute RF target for this tone; the FM carrier sits
-    // exactly at the dial frequency, so just retune. Fire-and-forget for timing.
+    // `frequency` is the absolute RF target for this tone; the CW carrier sits
+    // exactly at the dial frequency (pending verification -- see ft8_prepare's
+    // header comment), so just retune. Fire-and-forget for timing.
     (void) rfFreq;
     (void) audioFreq;
     uint8_t cmd[6] = { CIV_CMD_SET_FREQ };

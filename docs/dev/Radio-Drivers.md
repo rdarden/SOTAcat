@@ -93,22 +93,42 @@ but is deliberately not shipped — it isn't useful in field operation.)
 
 **FT8:** the IC-705 has no CAT command for audio tone generation (no CI-V
 equivalent of the QMX's `TA`), so FSK is synthesized KX-style: transmit a
-steady carrier and step the dial for each of the 79 tones. FM mode provides
-the carrier — PTT with no audio transmits an unmodulated carrier at exactly
-the dial frequency, and the VFO retunes cleanly mid-transmit (bench-verified:
-8/8 six-Hz steps while keyed; a full 79-tone transmission completes in the
-expected 12.64 s (79 x 160 ms) with no queue timeouts, and a SOTAmat-initiated
-transmission was received and decoded correctly by an independent nearby
-receiver). Each 160 ms tone step is a
-fire-and-forget CI-V `0x05` set-frequency frame; the next frame's input flush
-clears accumulated ACKs.
+steady carrier and step the dial for each of the 79 tones. **CW mode
+provides the carrier** — PTT-held in CW mode, with no keyer/key-line
+activity, keys a continuous carrier with no audio-modulation path at all.
+Each 160 ms tone step is a fire-and-forget CI-V `0x05` set-frequency frame;
+the next frame's input flush clears accumulated ACKs.
+
+CW mode was chosen over the originally-shipped FM mode specifically for that
+"no audio path" property. FM PTT with no intentional modulation *should*
+also produce a clean carrier — and bench testing under quiet-room conditions
+confirmed it did (8/8 six-Hz steps while keyed; a full 79-tone transmission
+completed in the expected 12.64 s (79 x 160 ms) with no queue timeouts, and a
+SOTAmat-initiated transmission was received and decoded correctly by an
+independent nearby receiver) — but that only rules out contamination under
+the conditions actually tested. FM mode's audio chain, including the mic, is
+structurally live during PTT; a SOTA activation in the field (wind, the
+operator talking near the radio) could feed the mic and modulate the carrier
+in a way a quiet bench never would. CW mode removes that risk class
+entirely rather than relying on "quiet enough during the test."
+
+**NEEDS BENCH VERIFICATION** (not yet re-tested on real hardware since the
+FM->CW switch): confirm PTT-held CW mode produces a steady carrier exactly
+at the displayed frequency, with no CW-pitch/sidetone offset applied to the
+actual TX frequency (if the radio does apply one, every tone needs a
+compensating offset); confirm the VFO still retunes cleanly mid-keydown in
+CW mode the way it did in FM; and specifically re-run the decode test with
+deliberate ambient noise/talking near the mic during TX — ideally compared
+side-by-side against an FM-mode run under the same conditions, to confirm
+both that CW mode is unaffected and that the original FM contamination
+concern was real (or wasn't).
 
 **FT8 power policy (deliberate):** the IC-705 transmits FT8 at whatever RF
 POWER the operator has set — the driver never adjusts it. This differs from
 the KX2/KX3 driver, which forces TUN PWR to 10 W, but that is a mechanical
 necessity unique to Elecraft (the KX generates its FT8 carrier via the TUNE
 function, governed by the separate TUN PWR menu rather than normal operating
-power). The IC-705's FM carrier uses the ordinary RF POWER setting, so the
+power). The IC-705's carrier uses the ordinary RF POWER setting, so the
 operator's deliberate power choice is respected. (CI-V `0x14 0x0A` is the
 hook if programmatic power control is ever wanted.)
 `get_radio_state`/`restore_radio_state` capture and restore mode + VFO
@@ -196,8 +216,8 @@ captures or restores radio state. The lifecycle:
 
 1. **Capture**: `prepareft8` snapshots the radio via `get_radio_state()`
    before anything is touched.
-2. **Mutate**: `ft8_prepare()` retunes and switches mode (CW on the KX2/KX3,
-   DIGI on the QMX, FM on the IC-705; the KH1 leaves mode untouched and only
+2. **Mutate**: `ft8_prepare()` retunes and switches mode (CW on the KX2/KX3
+   and the IC-705, DIGI on the QMX; the KH1 leaves mode untouched and only
    zeroes its CW offset); the KX driver additionally forces TUN PWR to 10 W.
 3. **Restore** via `restore_radio_state()` in three places: immediately if
    prepare fails partway; in `cleanup_ft8_task()` after the transmission

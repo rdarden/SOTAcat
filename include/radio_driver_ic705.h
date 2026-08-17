@@ -16,8 +16,12 @@
  * Capability notes (see docs/dev/Radio-Drivers.md for protocol details):
  *  - MODE_DATA / MODE_DATA_R map to USB-D / LSB-D via the radio's separate
  *    data-mode flag rather than distinct mode codes.
- *  - FT8 is synthesized by stepping the dial frequency under an FM carrier
- *    (the IC-705 has no CAT command for audio tone generation).
+ *  - FT8 is synthesized by stepping the dial frequency under a CW carrier
+ *    (the IC-705 has no CAT command for audio tone generation). CW mode is
+ *    used rather than FM specifically because CW has no audio-modulation
+ *    path, so the carrier cannot be contaminated by mic pickup the way an
+ *    FM carrier structurally could be -- see ft8_prepare()'s comment in
+ *    radio_driver_ic705.cpp for the pending bench-verification items.
  *  - ATU tune tries the native tuner protocol first (AH-705-compatible
  *    tuners), then falls back to keying a low-power carrier for RF-sensing
  *    tuners; refused above 6 m where no supported tuner operates.
